@@ -5,8 +5,8 @@ from flask import Flask
 import threading
 
 # Получаем токен из переменных окружения Render
-TOKEN = os.environ.get('TELEGRAM_TOKEN', '8585405052:AAEKLm8KH-5HGMrjLK4vvKtwsTiMAwzuIko')
-ADMIN_IDS = [int(x) for x in os.environ.get('ADMIN_IDS', '76657563').split(',')]
+TOKEN = os.environ['TELEGRAM_TOKEN']  # Без дефолтного значения!
+ADMIN_IDS = [int(x) for x in os.environ['ADMIN_IDS'].split(',')]  # Без дефолтного значения!
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -324,3 +324,4 @@ if __name__ == '__main__':
     # Запускаем Flask сервер
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+
