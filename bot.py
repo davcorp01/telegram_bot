@@ -4,12 +4,21 @@ from datetime import datetime
 from flask import Flask
 import threading
 
-# Получаем токен из переменных окружения Render
-TOKEN = os.environ['TELEGRAM_TOKEN']  # Без дефолтного значения!
-ADMIN_IDS = [int(x) for x in os.environ['ADMIN_IDS'].split(',')]  # Без дефолтного значения!
+# ========== БЕЗОПАСНОЕ ПОЛУЧЕНИЕ ТОКЕНОВ ==========
+# Получаем токен ТОЛЬКО из переменных окружения
+try:
+    TOKEN = os.environ['TELEGRAM_TOKEN']
+    ADMIN_IDS = [int(x) for x in os.environ['ADMIN_IDS'].split(',')]
+except KeyError as e:
+    print(f"❌ ОШИБКА: Не найдена переменная окружения: {e}")
+    print("Установите на Render:")
+    print("1. TELEGRAM_TOKEN = ваш_токен")
+    print("2. ADMIN_IDS = 76657563")
+    raise SystemExit(1)
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
+
 
 # ========== БАЗА ДАННЫХ В ПАМЯТИ ==========
 db = {
@@ -324,4 +333,5 @@ if __name__ == '__main__':
     # Запускаем Flask сервер
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+
 
