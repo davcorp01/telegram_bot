@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: wine-telegram-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        value: ваш_токен_бота
+      - key: ADMIN_IDS
+        value: 76657563
+    autoDeploy: true
