@@ -206,27 +206,33 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
     """Добавить операцию (списание/пополнение)"""
     conn = get_db_connection()
     if not conn:
-        return False
+        return False, "❌ Ошибка подключения к БД"
     
     try:
         user = get_user_by_telegram_id(telegram_id)
         if not user:
-            return False
+            return False, "❌ Пользователь не найден"
         
         # Определяем склад
         target_warehouse = warehouse_id or user['warehouse_id']
         if not target_warehouse:
-            return False
+            return False, "❌ Склад не назначен"
         
         # Проверяем достаточно ли товара для списания
         if transaction_type == 'out':
-            current = conn.run("""
+            current_result = conn.run("""
                 SELECT quantity FROM balances 
                 WHERE user_id = :user_id AND product_id = :product_id AND warehouse_id = :warehouse_id
             """, user_id=user['id'], product_id=product_id, warehouse_id=target_warehouse)
             
-            if current and current[0][0] and current[0][0] < quantity:
-                return False  # Недостаточно товара
+            # Проверяем, есть ли запись вообще
+            if not current_result or not current_result[0]:
+                return False, "❌ У вас нет этого товара на складе"
+            
+            current_quantity = current_result[0][0] or 0
+            
+            if current_quantity < quantity:
+                return False, f"❌ Недостаточно товара. Доступно: {current_quantity} шт., а вы хотите списать: {quantity} шт."
         
         # Обновляем баланс
         conn.run("""
@@ -252,17 +258,16 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
         type=transaction_type,
         quantity=quantity)
         
-        return True
+        return True, f"✅ Товар успешно {'пополнен' if transaction_type == 'in' else 'списан'} в количестве {quantity} шт."
         
     except Exception as e:
         print(f"❌ Error adding transaction: {e}", file=sys.stderr)
-        return False
+        return False, f"❌ Ошибка: {e}"
     finally:
         try:
             conn.close()
         except:
             pass
-
 # ========== КОМАНДЫ БОТА ==========
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -404,23 +409,17 @@ def process_spend_product(message):
         bot.reply_to(message, "❌ Неверный формат. Используйте кнопки.", 
                     reply_markup=telebot.types.ReplyKeyboardRemove())
 
-def process_spend_quantity(message, product_id):
-    """Обработка количества для списания"""
+def process_add_quantity(message, warehouse_id, target_telegram_id, product_id):
+    """Обработка количества для пополнения"""
     try:
         quantity = int(message.text)
         if quantity <= 0:
             bot.reply_to(message, "❌ Количество должно быть больше 0")
             return
         
-        user = get_user_by_telegram_id(message.from_user.id)
-        if not user:
-            return
-        
-        # Выполняем списание
-        if add_transaction(message.from_user.id, product_id, quantity, 'out'):
-            bot.reply_to(message, f"✅ Товар успешно списан в количестве {quantity} шт.")
-        else:
-            bot.reply_to(message, "❌ Не удалось списать товар. Возможно, недостаточно остатков.")
+        # Выполняем пополнение
+        success, result_message = add_transaction(target_telegram_id, product_id, quantity, 'in', warehouse_id)
+        bot.reply_to(message, result_message)
     except ValueError:
         bot.reply_to(message, "❌ Введите число")
 
@@ -810,23 +809,27 @@ def users_command(message):
         except:
             pass
 
-# ========== ОБРАБОТКА КНОПОК (ПОСЛЕ ВСЕХ КОМАНД!) ==========
+# ========== ОБРАБОТКА КНОПОК ==========
 @bot.message_handler(func=lambda message: True)
 def handle_buttons(message):
-    """Обработка нажатий на кнопки"""
+    """Обработка нажатий на кнопки и текстовых сообщений"""
     
+    # Если сообщение пустое - пропускаем
     if not message.text:
         return
     
+    # Если это команда (начинается с /) - ПРОПУСКАЕМ
     if message.text.startswith('/'):
-        return  # Пропускаем команды
+        return
     
     user = get_user_by_telegram_id(message.from_user.id)
     if not user:
+        bot.reply_to(message, "Сначала /start")
         return
     
     text = message.text
     
+    # Обработка кнопок
     if text == '📊 Мои остатки':
         balance(message)
     elif text == '📤 Списать':
@@ -845,7 +848,14 @@ def handle_buttons(message):
         users_command(message)
     elif text == '🔄 Пополнить остатки' and user['role'] == 'admin':
         add_stock_command(message)
-    # else не нужен - пусть другие хендлеры обрабатывают
+    else:
+        # Обработка обычного текста
+        if text.lower() in ['привет', 'hello', 'hi', 'здравствуй']:
+            bot.reply_to(message, f"Привет, {user['full_name']}! 👋\nИспользуйте кнопки или команды.")
+        elif text.lower() in ['помощь', 'help', 'справка']:
+            bot.reply_to(message, "Используйте кнопки или команды из меню. /start - для списка команд.")
+        else:
+            bot.reply_to(message, "Не понимаю команду. Используйте кнопки ниже или команды из меню.\n/start - для помощи.")
 
 # ========== WEBHOOK И ЗАПУСК ==========
 @app.route('/')
