@@ -296,8 +296,8 @@ def start(message):
 *Используйте кнопки ниже или команды:*
 """
     
-    if user['role'] == 'admin':
-        response += """
+if user['role'] == 'admin':
+    response += """
 *📋 Все команды:*
 
 📊 /balance - Мои остатки
@@ -321,9 +321,14 @@ def start(message):
                      reply_markup=markup)
 #=======================================
 # ========== ОБРАБОТКА КНОПОК ==========
-@bot.message_handler(func=lambda message: True)
+@bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_buttons(message):
     """Обработка нажатий на кнопки"""
+    
+    # Пропускаем команды (начинающиеся с /)
+    if message.text.startswith('/'):
+        return  # Пусть команды обрабатываются своими хендлерами
+    
     user = get_user_by_telegram_id(message.from_user.id)
     if not user:
         bot.reply_to(message, "Сначала /start")
@@ -332,7 +337,6 @@ def handle_buttons(message):
     text = message.text
     
     if text == '📊 Мои остатки':
-        bot.send_message(message.chat.id, "Запрос остатков...")
         balance(message)
     elif text == '📤 Списать':
         spend_command(message)
@@ -350,7 +354,9 @@ def handle_buttons(message):
         users_command(message)
     elif text == '🔄 Пополнить остатки' and user['role'] == 'admin':
         add_stock_command(message)
-    # Ничего не делаем для других сообщений - их обработают другие хендлеры
+    else:
+        # Если сообщение не распознано
+        bot.reply_to(message, "Неизвестная команда. Используйте кнопки или команды из меню.")
 #========================================================
 
 @bot.message_handler(commands=['balance'])
