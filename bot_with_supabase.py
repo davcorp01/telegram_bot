@@ -505,9 +505,22 @@ def all_balance_command(message):
     bot.reply_to(message, response)
 
 # ========== WEBHOOK И ЗАПУСК ==========
-@app.post('/webhook')
+@app.route('/health')
+def health_check():
+    """Для UptimeRobot - проверка работы"""
+    return 'OK!', 200
+
+@app.route('/')
+def index():
+    """Корневая страница"""
+    return '🤖 Wine Warehouse Bot is running!', 200
+
+@app.route('/webhook', methods=['POST', 'GET'])  # <-- ДОБАВЛЕНО GET
 def webhook():
     """Обработчик вебхука от Telegram"""
+    if request.method == 'GET':  # <-- ДОБАВЛЕНО
+        return 'Webhook is active!', 200  # <-- ДОБАВЛЕНО
+    
     try:
         json_str = request.get_data().decode('UTF-8')
         update = telebot.types.Update.de_json(json_str)
@@ -517,10 +530,7 @@ def webhook():
         print(f"❌ Webhook error: {e}", file=sys.stderr)
         return 'error', 500
 
-@app.route('/health')
-def health_check():
-    """Для UptimeRobot"""
-    return 'OK!', 200
+
 
 if __name__ == '__main__':
     # Тест подключения к БД
