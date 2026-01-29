@@ -418,6 +418,23 @@ def process_spend_product(message):
         bot.reply_to(message, "❌ Неверный формат. Введите номер товара или выберите из списка.", 
                     reply_markup=telebot.types.ReplyKeyboardRemove())
 
+
+def process_spend_quantity(message, product_id):
+    """Обработка количества для списания"""
+    try:
+        quantity = int(message.text)
+        if quantity <= 0:
+            bot.reply_to(message, "❌ Количество должно быть больше 0")
+            return
+        
+        # Выполняем списание
+        success, result_message = add_transaction(message.from_user.id, product_id, quantity, 'out')
+        
+        bot.reply_to(message, result_message)
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Введите число")
+
 def process_add_quantity(message, warehouse_id, target_telegram_id, product_id):
     """Обработка количества для пополнения"""
     try:
@@ -610,22 +627,6 @@ def process_add_product_selection(message, warehouse_id, target_telegram_id):
         bot.register_next_step_handler(msg, process_add_quantity, warehouse_id, target_telegram_id, product_id)
     except:
         bot.reply_to(message, "❌ Неверный формат", reply_markup=telebot.types.ReplyKeyboardRemove())
-
-def process_add_quantity(message, warehouse_id, target_telegram_id, product_id):
-    """Обработка количества для пополнения"""
-    try:
-        quantity = int(message.text)
-        if quantity <= 0:
-            bot.reply_to(message, "❌ Количество должно быть больше 0")
-            return
-        
-        # Выполняем пополнение
-        if add_transaction(target_telegram_id, product_id, quantity, 'in', warehouse_id):
-            bot.reply_to(message, f"✅ Товар успешно пополнен в количестве {quantity} шт.")
-        else:
-            bot.reply_to(message, "❌ Не удалось пополнить товар")
-    except ValueError:
-        bot.reply_to(message, "❌ Введите число")
 
 @bot.message_handler(commands=['add_user'])
 def add_user_command(message):
