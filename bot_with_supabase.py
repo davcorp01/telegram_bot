@@ -493,6 +493,294 @@ def all_balance_command(message):
     response += f"\n📊 Всего товаров в системе: {total_all} шт."
     bot.reply_to(message, response)
 
+@bot.message_handler(commands=['add'])
+def add_stock_command(message):
+    """Пополнить остатки (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    # Запрашиваем склад
+    warehouses = get_all_warehouses()
+    if not warehouses:
+        bot.reply_to(message, "❌ В системе нет складов. Сначала /add_warehouse")
+        return
+    
+    markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+    for warehouse in warehouses:
+        markup.add(f"{warehouse['id']}. {warehouse['name']}")
+    markup.add("❌ Отмена")
+    
+    msg = bot.reply_to(message, "📦 Выберите склад для пополнения:", reply_markup=markup)
+    bot.register_next_step_handler(msg, process_add_warehouse_selection)
+
+def process_add_warehouse_selection(message):
+    """Обработка выбора склада"""
+    if message.text == "❌ Отмена":
+        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
+        return
+    
+    try:
+        warehouse_id = int(message.text.split('.')[0])
+        
+        # Запрашиваем пользователя (кому пополняем)
+        msg = bot.reply_to(message, "👤 Введите telegram_id пользователя:", 
+                          reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(msg, process_add_user_selection, warehouse_id)
+    except:
+        bot.reply_to(message, "❌ Неверный формат", reply_markup=telebot.types.ReplyKeyboardRemove())
+
+def process_add_user_selection(message, warehouse_id):
+    """Обработка выбора пользователя"""
+    try:
+        target_telegram_id = int(message.text)
+        
+        # Проверяем существование пользователя
+        target_user = get_user_by_telegram_id(target_telegram_id)
+        if not target_user:
+            bot.reply_to(message, f"❌ Пользователь с ID {target_telegram_id} не найден")
+            return
+        
+        # Запрашиваем товар
+        products = get_all_products()
+        if not products:
+            bot.reply_to(message, "❌ В системе нет товаров")
+            return
+        
+        markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        for product in products:
+            markup.add(f"{product['id']}. {product['name']}")
+        markup.add("❌ Отмена")
+        
+        msg = bot.reply_to(message, "📝 Выберите товар для пополнения:", reply_markup=markup)
+        bot.register_next_step_handler(msg, process_add_product_selection, warehouse_id, target_telegram_id)
+    except ValueError:
+        bot.reply_to(message, "❌ Введите числовой ID")
+
+def process_add_product_selection(message, warehouse_id, target_telegram_id):
+    """Обработка выбора товара"""
+    if message.text == "❌ Отмена":
+        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
+        return
+    
+    try:
+        product_id = int(message.text.split('.')[0])
+        
+        # Запрашиваем количество
+        msg = bot.reply_to(message, "📝 Введите количество для пополнения:", 
+                          reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(msg, process_add_quantity, warehouse_id, target_telegram_id, product_id)
+    except:
+        bot.reply_to(message, "❌ Неверный формат", reply_markup=telebot.types.ReplyKeyboardRemove())
+
+def process_add_quantity(message, warehouse_id, target_telegram_id, product_id):
+    """Обработка количества для пополнения"""
+    try:
+        quantity = int(message.text)
+        if quantity <= 0:
+            bot.reply_to(message, "❌ Количество должно быть больше 0")
+            return
+        
+        # Выполняем пополнение
+        if add_transaction(target_telegram_id, product_id, quantity, 'in', warehouse_id):
+            bot.reply_to(message, f"✅ Товар успешно пополнен в количестве {quantity} шт.")
+        else:
+            bot.reply_to(message, "❌ Не удалось пополнить товар")
+    except ValueError:
+        bot.reply_to(message, "❌ Введите число")
+
+@bot.message_handler(commands=['add_user'])
+def add_user_command(message):
+    """Добавить пользователя (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    msg = bot.reply_to(message, "👤 Введите telegram_id нового пользователя:")
+    bot.register_next_step_handler(msg, process_add_user_telegram_id)
+
+def process_add_user_telegram_id(message):
+    """Обработка telegram_id нового пользователя"""
+    try:
+        telegram_id = int(message.text)
+        
+        # Проверяем, не существует ли уже
+        existing = get_user_by_telegram_id(telegram_id)
+        if existing:
+            bot.reply_to(message, f"❌ Пользователь с ID {telegram_id} уже существует")
+            return
+        
+        msg = bot.reply_to(message, "📝 Введите имя нового пользователя:")
+        bot.register_next_step_handler(msg, process_add_user_name, telegram_id)
+    except ValueError:
+        bot.reply_to(message, "❌ Введите числовой ID")
+
+def process_add_user_name(message, telegram_id):
+    """Обработка имени нового пользователя"""
+    full_name = message.text.strip()
+    if not full_name:
+        bot.reply_to(message, "❌ Имя не может быть пустым")
+        return
+    
+    # Запрашиваем склад
+    warehouses = get_all_warehouses()
+    if not warehouses:
+        bot.reply_to(message, "❌ В системе нет складов. Сначала /add_warehouse")
+        return
+    
+    markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+    for warehouse in warehouses:
+        markup.add(f"{warehouse['id']}. {warehouse['name']}")
+    markup.add("❌ Отмена")
+    
+    msg = bot.reply_to(message, "📦 Выберите склад для пользователя:", reply_markup=markup)
+    bot.register_next_step_handler(msg, process_add_user_warehouse, telegram_id, full_name)
+
+def process_add_user_warehouse(message, telegram_id, full_name):
+    """Обработка выбора склада для нового пользователя"""
+    if message.text == "❌ Отмена":
+        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
+        return
+    
+    try:
+        warehouse_id = int(message.text.split('.')[0])
+        
+        conn = get_db_connection()
+        if not conn:
+            bot.reply_to(message, "❌ Ошибка подключения к БД")
+            return
+        
+        # Определяем роль (можно добавить выбор роли, но пока user)
+        role = 'admin' if telegram_id in ADMIN_IDS else 'user'
+        
+        conn.run("""
+            INSERT INTO users (telegram_id, full_name, role, warehouse_id) 
+            VALUES (:telegram_id, :full_name, :role, :warehouse_id)
+        """, telegram_id=telegram_id, full_name=full_name, role=role, warehouse_id=warehouse_id)
+        
+        # Инициализируем нулевые остатки для всех товаров
+        products = get_all_products()
+        for product in products:
+            conn.run("""
+                INSERT INTO balances (user_id, product_id, warehouse_id, quantity)
+                SELECT u.id, :product_id, :warehouse_id, 0
+                FROM users u
+                WHERE u.telegram_id = :telegram_id
+                ON CONFLICT (user_id, product_id, warehouse_id) DO NOTHING
+            """, product_id=product['id'], warehouse_id=warehouse_id, telegram_id=telegram_id)
+        
+        bot.reply_to(message, f"✅ Пользователь {full_name} (ID: {telegram_id}) успешно добавлен!", 
+                    reply_markup=telebot.types.ReplyKeyboardRemove())
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}", reply_markup=telebot.types.ReplyKeyboardRemove())
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+@bot.message_handler(commands=['warehouses'])
+def warehouses_command(message):
+    """Список складов с пользователями (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    conn = get_db_connection()
+    if not conn:
+        bot.reply_to(message, "❌ Ошибка подключения к БД")
+        return
+    
+    try:
+        # Получаем склады с пользователями
+        result = conn.run("""
+            SELECT w.id, w.name, 
+                   COALESCE(u.count, 0) as user_count,
+                   STRING_AGG(u.full_name, ', ') as users
+            FROM warehouses w
+            LEFT JOIN (
+                SELECT warehouse_id, 
+                       COUNT(*) as count,
+                       STRING_AGG(full_name, ', ') as full_name
+                FROM users 
+                GROUP BY warehouse_id
+            ) u ON w.id = u.warehouse_id
+            GROUP BY w.id, w.name, u.count
+            ORDER BY w.name
+        """)
+        
+        if not result:
+            bot.reply_to(message, "📦 В системе нет складов")
+            return
+        
+        response = "📋 СПИСОК СКЛАДОВ:\n\n"
+        
+        for row in result:
+            warehouse_id, name, user_count, users = row
+            users_list = users if users else "нет пользователей"
+            response += f"🏢 {name} (ID: {warehouse_id})\n"
+            response += f"   👥 Пользователей: {user_count}\n"
+            response += f"   📝 Пользователи: {users_list}\n\n"
+        
+        bot.reply_to(message, response)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
+
+@bot.message_handler(commands=['users'])
+def users_command(message):
+    """Список пользователей (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    conn = get_db_connection()
+    if not conn:
+        bot.reply_to(message, "❌ Ошибка подключения к БД")
+        return
+    
+    try:
+        result = conn.run("""
+            SELECT u.telegram_id, u.full_name, u.role, w.name as warehouse_name
+            FROM users u
+            LEFT JOIN warehouses w ON u.warehouse_id = w.id
+            ORDER BY u.full_name
+        """)
+        
+        if not result:
+            bot.reply_to(message, "👥 В системе нет пользователей")
+            return
+        
+        response = "📋 СПИСОК ПОЛЬЗОВАТЕЛЕЙ:\n\n"
+        
+        for row in result:
+            telegram_id, full_name, role, warehouse_name = row
+            role_icon = "👑" if role == 'admin' else "👤"
+            warehouse = warehouse_name if warehouse_name else "склад не назначен"
+            response += f"{role_icon} {full_name}\n"
+            response += f"   ID: {telegram_id}\n"
+            response += f"   📦 Склад: {warehouse}\n\n"
+        
+        bot.reply_to(message, response)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
 # ========== WEBHOOK И ЗАПУСК ==========
 @app.route('/')
 def index():
