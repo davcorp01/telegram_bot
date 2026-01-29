@@ -856,6 +856,27 @@ def users_command(message):
         except:
             pass
 
+# ========== СИНОНИМЫ КОМАНД ==========
+
+@bot.message_handler(commands=['adduser'])
+def adduser_alias_command(message):
+    """Синоним для /add_user (без подчеркивания)"""
+    add_user_command(message)
+
+@bot.message_handler(commands=['addproduct'])
+def addproduct_alias_command(message):
+    """Синоним для /add_product (без подчеркивания)"""
+    add_product_command(message)
+
+@bot.message_handler(commands=['addwarehouse'])
+def addwarehouse_alias_command(message):
+    """Синоним для /add_warehouse (без подчеркивания)"""
+    add_warehouse_command(message)
+
+@bot.message_handler(commands=['allbalance'])
+def allbalance_alias_command(message):
+    """Синоним для /all_balance (без подчеркивания)"""
+    all_balance_command(message)
 # ========== ОБРАБОТКА КНОПОК ==========
 @bot.message_handler(func=lambda message: True)
 def handle_buttons(message):
