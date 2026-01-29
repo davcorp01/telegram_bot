@@ -2,11 +2,12 @@ import os
 import sys
 import telebot
 from datetime import datetime
-from flask import Flask
+from flask import Flask, request
 import threading
 import pg8000
 from pg8000.native import Connection, DatabaseError
 import json
+import time  # <-- ДОБАВЛЕНО
 
 print("=" * 60, file=sys.stderr)
 print("🤖 WINE BOT WITH SUPABASE (pg8000)", file=sys.stderr)
@@ -207,12 +208,22 @@ def balance(message):
 def ping(message):
     bot.reply_to(message, "🏓 PONG! Бот с Supabase работает!")
 
-# ... остальной код (Flask, запуск)
+# ========== WEBHOOK ОБРАБОТЧИК (НОВОЕ!) ==========
+@app.post('/webhook')  # <-- ДОБАВЛЕНО
+def webhook():          # <-- ДОБАВЛЕНО
+    """Обработчик вебхука от Telegram"""  # <-- ДОБАВЛЕНО
+    try:  # <-- ДОБАВЛЕНО
+        json_str = request.get_data().decode('UTF-8')  # <-- ДОБАВЛЕНО
+        update = telebot.types.Update.de_json(json_str)  # <-- ДОБАВЛЕНО
+        bot.process_new_updates([update])  # <-- ДОБАВЛЕНО
+        return 'ok', 200  # <-- ДОБАВЛЕНО
+    except Exception as e:  # <-- ДОБАВЛЕНО
+        print(f"❌ Webhook error: {e}", file=sys.stderr)  # <-- ДОБАВЛЕНО
+        return 'error', 500  # <-- ДОБАВЛЕНО
 
-def run_bot():
-    print("🤖 Starting bot...", file=sys.stderr)
-    bot.polling(none_stop=True)
+# Удалил старую функцию run_bot() и bot_thread
 
+# ========== ЗАПУСК (ПЕРЕПИСАНО!) ==========
 if __name__ == '__main__':
     # Тест подключения
     print("🔍 Testing database...", file=sys.stderr)
@@ -225,9 +236,27 @@ if __name__ == '__main__':
         except:
             pass
     
-    # Запуск
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
+    # УДАЛЯЕМ старый вебхук (если был)  # <-- ИЗМЕНЕНО
+    try:
+        bot.remove_webhook()  # <-- ИЗМЕНЕНО
+        print("✅ Old webhook removed", file=sys.stderr)  # <-- ИЗМЕНЕНО
+    except Exception as e:  # <-- ИЗМЕНЕНО
+        print(f"ℹ️ No webhook to remove: {e}", file=sys.stderr)  # <-- ИЗМЕНЕНО
     
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    time.sleep(1)  # <-- ДОБАВЛЕНО
+    
+    # УСТАНАВЛИВАЕМ новый вебхук  # <-- ИЗМЕНЕНО
+    webhook_url = f"https://wine-telegram-bot.onrender.com/webhook"  # <-- ИЗМЕНЕНО
+    print(f"📡 Setting webhook to: {webhook_url}", file=sys.stderr)  # <-- ИЗМЕНЕНО
+    
+    try:  # <-- ИЗМЕНЕНО
+        bot.set_webhook(url=webhook_url)  # <-- ИЗМЕНЕНО
+        print("✅ Webhook установлен!", file=sys.stderr)  # <-- ИЗМЕНЕНО
+    except Exception as e:  # <-- ИЗМЕНЕНО
+        print(f"❌ Failed to set webhook: {e}", file=sys.stderr)  # <-- ИЗМЕНЕНО
+        sys.exit(1)  # <-- ДОБАВЛЕНО
+    
+    # ЗАПУСКАЕМ Flask сервер (и только его!)  # <-- ИЗМЕНЕНО
+    port = int(os.environ.get('PORT', 10000))  # <-- ИЗМЕНЕНО
+    print(f"🌐 Starting Flask server on port {port}...", file=sys.stderr)  # <-- ИЗМЕНЕНО
+    app.run(host='0.0.0.0', port=port)  # <-- ИЗМЕНЕНО
