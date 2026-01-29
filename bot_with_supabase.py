@@ -398,15 +398,24 @@ def process_spend_product(message):
         return
     
     try:
-        # Парсим ID товара
-        product_id = int(message.text.split('.')[0])
+        # Пробуем разные форматы ввода
+        text = message.text.strip()
+        
+        # Формат 1: "2. Вино Белое" -> берем первое число
+        if '.' in text:
+            product_id = int(text.split('.')[0].strip())
+        # Формат 2: просто число "1"
+        else:
+            product_id = int(text)
         
         # Запрашиваем количество
         msg = bot.reply_to(message, "📝 Введите количество для списания:", 
                           reply_markup=telebot.types.ReplyKeyboardRemove())
         bot.register_next_step_handler(msg, process_spend_quantity, product_id)
-    except:
-        bot.reply_to(message, "❌ Неверный формат. Используйте кнопки.", 
+        
+    except (ValueError, IndexError):
+        # Если не удалось распарсить
+        bot.reply_to(message, "❌ Неверный формат. Введите номер товара или выберите из списка.", 
                     reply_markup=telebot.types.ReplyKeyboardRemove())
 
 def process_add_quantity(message, warehouse_id, target_telegram_id, product_id):
