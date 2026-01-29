@@ -3,14 +3,13 @@ import sys
 import telebot
 from datetime import datetime
 from flask import Flask, request
-import threading
 import pg8000
-from pg8000.native import Connection, DatabaseError
+from pg8000.native import Connection
 import json
-import time  # <-- ДОБАВЛЕНО
+import time
 
 print("=" * 60, file=sys.stderr)
-print("🤖 WINE BOT WITH SUPABASE (pg8000)", file=sys.stderr)
+print("🤖 WINE WAREHOUSE BOT WITH SUPABASE", file=sys.stderr)
 print(f"Python: {sys.version}", file=sys.stderr)
 print("=" * 60, file=sys.stderr)
 
@@ -22,13 +21,11 @@ DATABASE_URL = os.environ['SUPABASE_DB_URL']
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# ========== ПОДКЛЮЧЕНИЕ К SUPABASE (pg8000) ==========
+# ========== БАЗА ДАННЫХ ==========
 def parse_db_url(url):
     """Разбираем URL подключения"""
-    # Убираем префикс
     url = url.replace('postgresql://', '')
     
-    # Разделяем логин:пароль@хост:порт/база
     if '@' in url:
         auth, rest = url.split('@', 1)
         user, password = auth.split(':', 1)
@@ -47,7 +44,6 @@ def parse_db_url(url):
         host, port = rest, 5432
         database = 'postgres'
     
-    # Убираем параметры из database
     database = database.split('?')[0]
     
     return {
@@ -59,78 +55,43 @@ def parse_db_url(url):
     }
 
 def get_db_connection():
-    """Создаем подключение через pg8000"""
+    """Создаем подключение к БД"""
     try:
         params = parse_db_url(DATABASE_URL)
-        
-        # Для отладки
-        masked_params = params.copy()
-        masked_params['password'] = '****'
-        print(f"DB params: {masked_params}", file=sys.stderr)
-        
         conn = Connection(**params)
-        print("✅ Database connection established", file=sys.stderr)
         return conn
     except Exception as e:
-        print(f"❌ Database connection error: {e}", file=sys.stderr)
+        print(f"❌ DB connection error: {e}", file=sys.stderr)
         return None
 
-# ========== ПРОСТЫЕ ФУНКЦИИ БАЗЫ ==========
-def register_user(telegram_id, username, full_name):
-    """Регистрация пользователя"""
+# ========== ПОЛЬЗОВАТЕЛИ ==========
+def get_user_by_telegram_id(telegram_id):
+    """Получить пользователя по telegram_id"""
     conn = get_db_connection()
     if not conn:
         return None
     
     try:
-        # Проверяем есть ли пользователь
-        result = conn.run("SELECT * FROM users WHERE telegram_id = :telegram_id", 
-                         telegram_id=telegram_id)
+        result = conn.run("""
+            SELECT u.*, w.name as warehouse_name 
+            FROM users u
+            LEFT JOIN warehouses w ON u.warehouse_id = w.id
+            WHERE u.telegram_id = :telegram_id
+        """, telegram_id=telegram_id)
         
         if result:
-            # Пользователь уже есть
-            user = {
+            return {
                 'id': result[0][0],
                 'telegram_id': result[0][1],
                 'username': result[0][2],
                 'full_name': result[0][3],
-                'role': result[0][4]
+                'role': result[0][4],
+                'warehouse_id': result[0][6],
+                'warehouse_name': result[0][7]
             }
-            return user
-        
-        # Создаем нового
-        role = 'admin' if telegram_id in ADMIN_IDS else 'user'
-        conn.run("""
-            INSERT INTO users (telegram_id, username, full_name, role) 
-            VALUES (:telegram_id, :username, :full_name, :role)
-            RETURNING id, telegram_id, username, full_name, role
-        """, telegram_id=telegram_id, username=username, full_name=full_name, role=role)
-        
-        result = conn.run("SELECT * FROM users WHERE telegram_id = :telegram_id", 
-                         telegram_id=telegram_id)
-        
-        if result:
-            user = {
-                'id': result[0][0],
-                'telegram_id': result[0][1],
-                'username': result[0][2],
-                'full_name': result[0][3],
-                'role': result[0][4]
-            }
-            
-            # Создаем начальные остатки
-            products = conn.run("SELECT id FROM products")
-            for product in products:
-                conn.run("""
-                    INSERT INTO balances (user_id, product_id, quantity)
-                    VALUES (:user_id, :product_id, 50)
-                    ON CONFLICT (user_id, product_id) DO NOTHING
-                """, user_id=user['id'], product_id=product[0])
-            
-            return user
-        
+        return None
     except Exception as e:
-        print(f"❌ Error registering user: {e}", file=sys.stderr)
+        print(f"❌ Error getting user: {e}", file=sys.stderr)
         return None
     finally:
         try:
@@ -138,28 +99,109 @@ def register_user(telegram_id, username, full_name):
         except:
             pass
 
-def get_user_balance(telegram_id):
-    """Получить остатки"""
+def register_user(telegram_id, username, full_name):
+    """Регистрация нового пользователя (только для админов)"""
+    # Проверяем, не зарегистрирован ли уже
+    existing_user = get_user_by_telegram_id(telegram_id)
+    if existing_user:
+        return existing_user
+    
+    # Новых пользователей может добавлять только админ через специальную команду
+    # Здесь просто возвращаем None - регистрация закрыта
+    return None
+
+# ========== СКЛАДЫ ==========
+def get_all_warehouses():
+    """Получить все склады (для админа)"""
     conn = get_db_connection()
     if not conn:
         return []
     
     try:
-        result = conn.run("""
-            SELECT p.name, b.quantity 
-            FROM balances b
-            JOIN products p ON b.product_id = p.id
-            JOIN users u ON b.user_id = u.id
-            WHERE u.telegram_id = :telegram_id
-            ORDER BY p.name
-        """, telegram_id=telegram_id)
+        result = conn.run("SELECT id, name FROM warehouses ORDER BY name")
+        return [{'id': row[0], 'name': row[1]} for row in result]
+    except Exception as e:
+        print(f"❌ Error getting warehouses: {e}", file=sys.stderr)
+        return []
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
+# ========== ТОВАРЫ ==========
+def get_all_products():
+    """Получить все товары"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        result = conn.run("SELECT id, name FROM products ORDER BY name")
+        return [{'id': row[0], 'name': row[1]} for row in result]
+    except Exception as e:
+        print(f"❌ Error getting products: {e}", file=sys.stderr)
+        return []
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
+# ========== ОСТАТКИ ==========
+def get_user_balance(telegram_id, warehouse_id=None):
+    """Получить остатки пользователя"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        user = get_user_by_telegram_id(telegram_id)
+        if not user:
+            return []
         
-        balances = []
-        for row in result:
-            balances.append({'name': row[0], 'quantity': row[1]})
-        
-        return balances
-        
+        # Для обычных пользователей - только их склад
+        # Для админов - все склады или конкретный, если указан
+        if user['role'] == 'admin' and not warehouse_id:
+            # Админ видит все
+            result = conn.run("""
+                SELECT w.name, p.name, SUM(b.quantity)
+                FROM balances b
+                JOIN warehouses w ON b.warehouse_id = w.id
+                JOIN products p ON b.product_id = p.id
+                GROUP BY w.name, p.name
+                ORDER BY w.name, p.name
+            """)
+            balances = []
+            for row in result:
+                balances.append({
+                    'warehouse': row[0],
+                    'product': row[1],
+                    'quantity': row[2] or 0
+                })
+            return balances
+        else:
+            # Для обычного пользователя или админа с указанным складом
+            target_warehouse = warehouse_id or user['warehouse_id']
+            if not target_warehouse:
+                return []
+            
+            result = conn.run("""
+                SELECT p.name, b.quantity
+                FROM balances b
+                JOIN products p ON b.product_id = p.id
+                WHERE b.user_id = :user_id AND b.warehouse_id = :warehouse_id
+                ORDER BY p.name
+            """, user_id=user['id'], warehouse_id=target_warehouse)
+            
+            balances = []
+            for row in result:
+                balances.append({
+                    'product': row[0],
+                    'quantity': row[1] or 0
+                })
+            return balances
+            
     except Exception as e:
         print(f"❌ Error getting balance: {e}", file=sys.stderr)
         return []
@@ -169,63 +211,319 @@ def get_user_balance(telegram_id):
         except:
             pass
 
+# ========== ОПЕРАЦИИ ==========
+def add_transaction(telegram_id, product_id, quantity, transaction_type, warehouse_id=None):
+    """Добавить операцию (списание/пополнение)"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        user = get_user_by_telegram_id(telegram_id)
+        if not user:
+            return False
+        
+        # Определяем склад
+        target_warehouse = warehouse_id or user['warehouse_id']
+        if not target_warehouse:
+            return False
+        
+        # Проверяем достаточно ли товара для списания
+        if transaction_type == 'out':
+            current = conn.run("""
+                SELECT quantity FROM balances 
+                WHERE user_id = :user_id AND product_id = :product_id AND warehouse_id = :warehouse_id
+            """, user_id=user['id'], product_id=product_id, warehouse_id=target_warehouse)
+            
+            if current and current[0][0] and current[0][0] < quantity:
+                return False  # Недостаточно товара
+        
+        # Обновляем баланс
+        conn.run("""
+            INSERT INTO balances (user_id, product_id, warehouse_id, quantity)
+            VALUES (:user_id, :product_id, :warehouse_id, :quantity)
+            ON CONFLICT (user_id, product_id, warehouse_id) 
+            DO UPDATE SET quantity = balances.quantity + :change
+        """, 
+        user_id=user['id'], 
+        product_id=product_id,
+        warehouse_id=target_warehouse,
+        quantity=quantity if transaction_type == 'in' else -quantity,
+        change=quantity if transaction_type == 'in' else -quantity)
+        
+        # Добавляем запись в историю
+        conn.run("""
+            INSERT INTO transactions (user_id, product_id, warehouse_id, type, quantity)
+            VALUES (:user_id, :product_id, :warehouse_id, :type, :quantity)
+        """,
+        user_id=user['id'],
+        product_id=product_id,
+        warehouse_id=target_warehouse,
+        type=transaction_type,
+        quantity=quantity)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error adding transaction: {e}", file=sys.stderr)
+        return False
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
 # ========== КОМАНДЫ БОТА ==========
 @bot.message_handler(commands=['start'])
 def start(message):
-    user = register_user(
-        message.from_user.id,
-        message.from_user.username or "",
-        f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
-    )
+    """Начало работы"""
+    user = get_user_by_telegram_id(message.from_user.id)
     
-    if user:
-        role = "👑 Администратор" if user['role'] == 'admin' else "👤 Пользователь"
-        response = f"✅ Добро пожаловать, {user['full_name']}!\n{role}\nИспользуйте /balance"
-    else:
-        response = "❌ Ошибка. Попробуйте позже."
+    if not user:
+        bot.reply_to(message, "❌ Вы не зарегистрированы в системе. Обратитесь к администратору.")
+        return
+    
+    role = "👑 Администратор" if user['role'] == 'admin' else "👤 Пользователь"
+    warehouse = f"📦 Склад: {user['warehouse_name']}" if user['warehouse_name'] else "📦 Склад не назначен"
+    
+    response = f"""✅ Добро пожаловать, {user['full_name']}!
+{role}
+{warehouse}
+
+Доступные команды:
+/balance - Мои остатки
+/spend - Списать товар
+
+"""
+    if user['role'] == 'admin':
+        response += """
+Команды администратора:
+/add_product - Добавить товар
+/add_warehouse - Добавить склад
+/add_user - Добавить пользователя
+/all_balance - Все остатки
+"""
     
     bot.reply_to(message, response)
 
 @bot.message_handler(commands=['balance'])
 def balance(message):
+    """Показать остатки"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user:
+        bot.reply_to(message, "❌ Вы не зарегистрированы.")
+        return
+    
     balances = get_user_balance(message.from_user.id)
     
     if not balances:
-        bot.reply_to(message, "❌ Нет данных. Сначала /start")
+        bot.reply_to(message, "📦 На вашем складе нет товаров.")
         return
     
-    response = "📦 ВАШИ ОСТАТКИ:\n\n"
+    response = f"📦 ОСТАТКИ НА СКЛАДЕ '{user['warehouse_name'] or 'не назначен'}':\n\n"
     total = 0
     
-    for item in balances:
-        response += f"• {item['name']}: {item['quantity']} л\n"
-        total += item['quantity']
+    if user['role'] == 'admin' and len(balances) > 0 and 'warehouse' in balances[0]:
+        # Админ видит все склады
+        current_warehouse = None
+        for item in balances:
+            if item['warehouse'] != current_warehouse:
+                response += f"\n🏢 {item['warehouse']}:\n"
+                current_warehouse = item['warehouse']
+            response += f"  • {item['product']}: {item['quantity']} шт.\n"
+            total += item['quantity']
+    else:
+        # Обычный пользователь
+        for item in balances:
+            response += f"• {item['product']}: {item['quantity']} шт.\n"
+            total += item['quantity']
     
-    response += f"\n📊 Всего: {total} л"
+    response += f"\n📊 Всего позиций: {len(balances)}"
     bot.reply_to(message, response)
 
-@bot.message_handler(commands=['ping'])
-def ping(message):
-    bot.reply_to(message, "🏓 PONG! Бот с Supabase работает!")
+@bot.message_handler(commands=['spend'])
+def spend_command(message):
+    """Списать товар"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user:
+        bot.reply_to(message, "❌ Вы не зарегистрированы.")
+        return
+    
+    if not user['warehouse_id']:
+        bot.reply_to(message, "❌ Вам не назначен склад. Обратитесь к администратору.")
+        return
+    
+    # Запрашиваем товар
+    products = get_all_products()
+    if not products:
+        bot.reply_to(message, "❌ В системе нет товаров.")
+        return
+    
+    # Создаем клавиатуру с товарами
+    markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+    for product in products:
+        markup.add(f"{product['id']}. {product['name']}")
+    markup.add("❌ Отмена")
+    
+    msg = bot.reply_to(message, "📝 Выберите товар для списания:", reply_markup=markup)
+    bot.register_next_step_handler(msg, process_spend_product)
 
-# ========== WEBHOOK ОБРАБОТЧИК (НОВОЕ!) ==========
-@app.post('/webhook')  # <-- ДОБАВЛЕНО
-def webhook():          # <-- ДОБАВЛЕНО
-    """Обработчик вебхука от Telegram"""  # <-- ДОБАВЛЕНО
-    try:  # <-- ДОБАВЛЕНО
-        json_str = request.get_data().decode('UTF-8')  # <-- ДОБАВЛЕНО
-        update = telebot.types.Update.de_json(json_str)  # <-- ДОБАВЛЕНО
-        bot.process_new_updates([update])  # <-- ДОБАВЛЕНО
-        return 'ok', 200  # <-- ДОБАВЛЕНО
-    except Exception as e:  # <-- ДОБАВЛЕНО
-        print(f"❌ Webhook error: {e}", file=sys.stderr)  # <-- ДОБАВЛЕНО
-        return 'error', 500  # <-- ДОБАВЛЕНО
+def process_spend_product(message):
+    """Обработка выбора товара для списания"""
+    if message.text == "❌ Отмена":
+        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
+        return
+    
+    try:
+        # Парсим ID товара
+        product_id = int(message.text.split('.')[0])
+        
+        # Запрашиваем количество
+        msg = bot.reply_to(message, "📝 Введите количество для списания:", 
+                          reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(msg, process_spend_quantity, product_id)
+    except:
+        bot.reply_to(message, "❌ Неверный формат. Используйте кнопки.", 
+                    reply_markup=telebot.types.ReplyKeyboardRemove())
 
-# Удалил старую функцию run_bot() и bot_thread
+def process_spend_quantity(message, product_id):
+    """Обработка количества для списания"""
+    try:
+        quantity = int(message.text)
+        if quantity <= 0:
+            bot.reply_to(message, "❌ Количество должно быть больше 0")
+            return
+        
+        user = get_user_by_telegram_id(message.from_user.id)
+        if not user:
+            return
+        
+        # Выполняем списание
+        if add_transaction(message.from_user.id, product_id, quantity, 'out'):
+            bot.reply_to(message, f"✅ Товар успешно списан в количестве {quantity} шт.")
+        else:
+            bot.reply_to(message, "❌ Не удалось списать товар. Возможно, недостаточно остатков.")
+    except ValueError:
+        bot.reply_to(message, "❌ Введите число")
 
-# ========== ЗАПУСК (ПЕРЕПИСАНО!) ==========
+# ========== АДМИН КОМАНДЫ ==========
+@bot.message_handler(commands=['add_product'])
+def add_product_command(message):
+    """Добавить товар (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    msg = bot.reply_to(message, "📝 Введите название нового товара:")
+    bot.register_next_step_handler(msg, process_add_product)
+
+def process_add_product(message):
+    """Обработка добавления товара"""
+    product_name = message.text.strip()
+    if not product_name:
+        bot.reply_to(message, "❌ Название не может быть пустым")
+        return
+    
+    conn = get_db_connection()
+    if not conn:
+        bot.reply_to(message, "❌ Ошибка подключения к БД")
+        return
+    
+    try:
+        conn.run("INSERT INTO products (name) VALUES (:name)", name=product_name)
+        bot.reply_to(message, f"✅ Товар '{product_name}' успешно добавлен")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
+@bot.message_handler(commands=['add_warehouse'])
+def add_warehouse_command(message):
+    """Добавить склад (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    msg = bot.reply_to(message, "📝 Введите название нового склада:")
+    bot.register_next_step_handler(msg, process_add_warehouse)
+
+def process_add_warehouse(message):
+    """Обработка добавления склада"""
+    warehouse_name = message.text.strip()
+    if not warehouse_name:
+        bot.reply_to(message, "❌ Название не может быть пустым")
+        return
+    
+    conn = get_db_connection()
+    if not conn:
+        bot.reply_to(message, "❌ Ошибка подключения к БД")
+        return
+    
+    try:
+        conn.run("INSERT INTO warehouses (name) VALUES (:name)", name=warehouse_name)
+        bot.reply_to(message, f"✅ Склад '{warehouse_name}' успешно добавлен")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
+@bot.message_handler(commands=['all_balance'])
+def all_balance_command(message):
+    """Все остатки (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    # Используем функцию баланса без указания склада
+    balances = get_user_balance(message.from_user.id)
+    
+    if not balances:
+        bot.reply_to(message, "📦 В системе нет остатков.")
+        return
+    
+    response = "📦 ОСТАТКИ ПО ВСЕМ СКЛАДАМ:\n\n"
+    current_warehouse = None
+    total_all = 0
+    
+    for item in balances:
+        if item['warehouse'] != current_warehouse:
+            response += f"\n🏢 {item['warehouse']}:\n"
+            current_warehouse = item['warehouse']
+        response += f"  • {item['product']}: {item['quantity']} шт.\n"
+        total_all += item['quantity']
+    
+    response += f"\n📊 Всего товаров в системе: {total_all} шт."
+    bot.reply_to(message, response)
+
+# ========== WEBHOOK И ЗАПУСК ==========
+@app.post('/webhook')
+def webhook():
+    """Обработчик вебхука от Telegram"""
+    try:
+        json_str = request.get_data().decode('UTF-8')
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+        return 'ok', 200
+    except Exception as e:
+        print(f"❌ Webhook error: {e}", file=sys.stderr)
+        return 'error', 500
+
+@app.route('/health')
+def health_check():
+    """Для UptimeRobot"""
+    return 'OK!', 200
+
 if __name__ == '__main__':
-    # Тест подключения
+    # Тест подключения к БД
     print("🔍 Testing database...", file=sys.stderr)
     conn = get_db_connection()
     if conn:
@@ -233,30 +531,21 @@ if __name__ == '__main__':
             result = conn.run("SELECT version()")
             print(f"✅ Database: {result[0][0][:50]}...", file=sys.stderr)
             conn.close()
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ Database test warning: {e}", file=sys.stderr)
     
-    # УДАЛЯЕМ старый вебхук (если был)  # <-- ИЗМЕНЕНО
+    # Настройка вебхука
     try:
-        bot.remove_webhook()  # <-- ИЗМЕНЕНО
-        print("✅ Old webhook removed", file=sys.stderr)  # <-- ИЗМЕНЕНО
-    except Exception as e:  # <-- ИЗМЕНЕНО
-        print(f"ℹ️ No webhook to remove: {e}", file=sys.stderr)  # <-- ИЗМЕНЕНО
+        bot.remove_webhook()
+        time.sleep(1)
+        
+        webhook_url = f"https://wine-telegram-bot.onrender.com/webhook"
+        bot.set_webhook(url=webhook_url)
+        print(f"✅ Webhook установлен: {webhook_url}", file=sys.stderr)
+    except Exception as e:
+        print(f"❌ Webhook setup error: {e}", file=sys.stderr)
     
-    time.sleep(1)  # <-- ДОБАВЛЕНО
-    
-    # УСТАНАВЛИВАЕМ новый вебхук  # <-- ИЗМЕНЕНО
-    webhook_url = f"https://wine-telegram-bot.onrender.com/webhook"  # <-- ИЗМЕНЕНО
-    print(f"📡 Setting webhook to: {webhook_url}", file=sys.stderr)  # <-- ИЗМЕНЕНО
-    
-    try:  # <-- ИЗМЕНЕНО
-        bot.set_webhook(url=webhook_url)  # <-- ИЗМЕНЕНО
-        print("✅ Webhook установлен!", file=sys.stderr)  # <-- ИЗМЕНЕНО
-    except Exception as e:  # <-- ИЗМЕНЕНО
-        print(f"❌ Failed to set webhook: {e}", file=sys.stderr)  # <-- ИЗМЕНЕНО
-        sys.exit(1)  # <-- ДОБАВЛЕНО
-    
-    # ЗАПУСКАЕМ Flask сервер (и только его!)  # <-- ИЗМЕНЕНО
-    port = int(os.environ.get('PORT', 10000))  # <-- ИЗМЕНЕНО
-    print(f"🌐 Starting Flask server on port {port}...", file=sys.stderr)  # <-- ИЗМЕНЕНО
-    app.run(host='0.0.0.0', port=port)  # <-- ИЗМЕНЕНО
+    # Запуск Flask
+    port = int(os.environ.get('PORT', 10000))
+    print(f"🌐 Starting Flask server on port {port}...", file=sys.stderr)
+    app.run(host='0.0.0.0', port=port)
