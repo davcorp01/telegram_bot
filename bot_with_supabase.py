@@ -8,6 +8,29 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 print("=" * 60, file=sys.stderr)
+print("🔍 Testing Supabase connection...", file=sys.stderr)
+
+# Маскируем пароль в логах для безопасности
+if 'SUPABASE_DB_URL' in os.environ:
+    db_url = os.environ['SUPABASE_DB_URL']
+    # Маскируем пароль
+    import re
+    masked_url = re.sub(r':([^@]+)@', ':****@', db_url)
+    print(f"Database URL: {masked_url}", file=sys.stderr)
+    
+    try:
+        conn = psycopg2.connect(db_url, sslmode='require')
+        with conn.cursor() as cur:
+            cur.execute("SELECT version();")
+            version = cur.fetchone()
+            print(f"✅ Supabase connected: {version[0][:50]}...", file=sys.stderr)
+        conn.close()
+    except Exception as e:
+        print(f"❌ Database connection failed: {e}", file=sys.stderr)
+else:
+    print("❌ SUPABASE_DB_URL not found in environment", file=sys.stderr)
+
+print("=" * 60, file=sys.stderr)
 print("🤖 WINE BOT WITH SUPABASE", file=sys.stderr)
 print("=" * 60, file=sys.stderr)
 
