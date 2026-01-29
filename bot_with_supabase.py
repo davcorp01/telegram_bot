@@ -644,6 +644,25 @@ def process_add_user_telegram_id(message):
     try:
         telegram_id = int(message.text)
         
+        # Проверяем, не существует ли уже (через нашу функцию)
+        existing = get_user_by_telegram_id(telegram_id)
+        if existing:
+            bot.reply_to(message, f"❌ Пользователь с ID {telegram_id} уже существует ({existing['full_name']})")
+            return
+        
+        msg = bot.reply_to(message, "📝 Введите имя нового пользователя:")
+        bot.register_next_step_handler(msg, process_add_user_name, telegram_id)
+    except ValueError:
+        bot.reply_to(message, "❌ Введите числовой ID")
+
+
+
+
+def process_add_user_telegram_id(message):
+    """Обработка telegram_id нового пользователя"""
+    try:
+        telegram_id = int(message.text)
+        
         # Проверяем, не существует ли уже
         existing = get_user_by_telegram_id(telegram_id)
         if existing:
@@ -687,38 +706,56 @@ def process_add_user_warehouse(message, telegram_id, full_name):
         
         conn = get_db_connection()
         if not conn:
-            bot.reply_to(message, "❌ Ошибка подключения к БД")
+            bot.reply_to(message, "❌ Ошибка подключения к БД", reply_markup=telebot.types.ReplyKeyboardRemove())
             return
         
         # Определяем роль (можно добавить выбор роли, но пока user)
         role = 'admin' if telegram_id in ADMIN_IDS else 'user'
         
+        # Вставляем пользователя БЕЗ указания id (используем SERIAL)
         conn.run("""
             INSERT INTO users (telegram_id, full_name, role, warehouse_id) 
             VALUES (:telegram_id, :full_name, :role, :warehouse_id)
         """, telegram_id=telegram_id, full_name=full_name, role=role, warehouse_id=warehouse_id)
+        
+        # Получаем ID нового пользователя
+        result = conn.run("SELECT id FROM users WHERE telegram_id = :telegram_id", 
+                         telegram_id=telegram_id)
+        
+        if not result:
+            bot.reply_to(message, "❌ Ошибка: не удалось создать пользователя", 
+                        reply_markup=telebot.types.ReplyKeyboardRemove())
+            return
+        
+        user_id = result[0][0]
         
         # Инициализируем нулевые остатки для всех товаров
         products = get_all_products()
         for product in products:
             conn.run("""
                 INSERT INTO balances (user_id, product_id, warehouse_id, quantity)
-                SELECT u.id, :product_id, :warehouse_id, 0
-                FROM users u
-                WHERE u.telegram_id = :telegram_id
+                VALUES (:user_id, :product_id, :warehouse_id, 0)
                 ON CONFLICT (user_id, product_id, warehouse_id) DO NOTHING
-            """, product_id=product['id'], warehouse_id=warehouse_id, telegram_id=telegram_id)
+            """, user_id=user_id, product_id=product['id'], warehouse_id=warehouse_id)
         
-        bot.reply_to(message, f"✅ Пользователь {full_name} (ID: {telegram_id}) успешно добавлен!", 
+        bot.reply_to(message, f"✅ Пользователь {full_name} (ID: {telegram_id}) успешно добавлен на склад!", 
                     reply_markup=telebot.types.ReplyKeyboardRemove())
         
     except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка: {e}", reply_markup=telebot.types.ReplyKeyboardRemove())
+        # Более понятное сообщение об ошибке
+        error_msg = str(e)
+        if "duplicate key" in error_msg or "23505" in error_msg:
+            bot.reply_to(message, f"❌ Пользователь с telegram_id {telegram_id} уже существует!", 
+                        reply_markup=telebot.types.ReplyKeyboardRemove())
+        else:
+            bot.reply_to(message, f"❌ Ошибка: {error_msg[:100]}", 
+                        reply_markup=telebot.types.ReplyKeyboardRemove())
     finally:
         try:
             conn.close()
         except:
             pass
+
 @bot.message_handler(commands=['warehouses'])
 def warehouses_command(message):
     """Список складов с пользователями (админ)"""
