@@ -322,43 +322,6 @@ def start(message):
                      parse_mode='Markdown', 
                      reply_markup=markup)
 #=======================================
-# ========== ОБРАБОТКА КНОПОК ==========
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def handle_buttons(message):
-    """Обработка нажатий на кнопки"""
-    
-    # Пропускаем команды (начинающиеся с /)
-    if message.text.startswith('/'):
-        return  # Пусть команды обрабатываются своими хендлерами
-    
-    user = get_user_by_telegram_id(message.from_user.id)
-    if not user:
-        bot.reply_to(message, "Сначала /start")
-        return
-    
-    text = message.text
-    
-    if text == '📊 Мои остатки':
-        balance(message)
-    elif text == '📤 Списать':
-        spend_command(message)
-    elif text == '📦 Все остатки' and user['role'] == 'admin':
-        all_balance_command(message)
-    elif text == '➕ Товар' and user['role'] == 'admin':
-        add_product_command(message)
-    elif text == '🏢 Склад' and user['role'] == 'admin':
-        add_warehouse_command(message)
-    elif text == '👤 Пользователь' and user['role'] == 'admin':
-        add_user_command(message)
-    elif text == '📋 Список складов' and user['role'] == 'admin':
-        warehouses_command(message)
-    elif text == '👥 Список пользователей' and user['role'] == 'admin':
-        users_command(message)
-    elif text == '🔄 Пополнить остатки' and user['role'] == 'admin':
-        add_stock_command(message)
-    else:
-        # Если сообщение не распознано
-        bot.reply_to(message, "Неизвестная команда. Используйте кнопки или команды из меню.")
 #========================================================
 
 @bot.message_handler(commands=['balance'])
@@ -846,6 +809,43 @@ def users_command(message):
             conn.close()
         except:
             pass
+
+# ========== ОБРАБОТКА КНОПОК (ПОСЛЕ ВСЕХ КОМАНД!) ==========
+@bot.message_handler(func=lambda message: True)
+def handle_buttons(message):
+    """Обработка нажатий на кнопки"""
+    
+    if not message.text:
+        return
+    
+    if message.text.startswith('/'):
+        return  # Пропускаем команды
+    
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user:
+        return
+    
+    text = message.text
+    
+    if text == '📊 Мои остатки':
+        balance(message)
+    elif text == '📤 Списать':
+        spend_command(message)
+    elif text == '📦 Все остатки' and user['role'] == 'admin':
+        all_balance_command(message)
+    elif text == '➕ Товар' and user['role'] == 'admin':
+        add_product_command(message)
+    elif text == '🏢 Склад' and user['role'] == 'admin':
+        add_warehouse_command(message)
+    elif text == '👤 Пользователь' and user['role'] == 'admin':
+        add_user_command(message)
+    elif text == '📋 Список складов' and user['role'] == 'admin':
+        warehouses_command(message)
+    elif text == '👥 Список пользователей' and user['role'] == 'admin':
+        users_command(message)
+    elif text == '🔄 Пополнить остатки' and user['role'] == 'admin':
+        add_stock_command(message)
+    # else не нужен - пусть другие хендлеры обрабатывают
 
 # ========== WEBHOOK И ЗАПУСК ==========
 @app.route('/')
