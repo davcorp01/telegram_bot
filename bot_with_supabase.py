@@ -99,17 +99,6 @@ def get_user_by_telegram_id(telegram_id):
         except:
             pass
 
-def register_user(telegram_id, username, full_name):
-    """Регистрация нового пользователя (только для админов)"""
-    # Проверяем, не зарегистрирован ли уже
-    existing_user = get_user_by_telegram_id(telegram_id)
-    if existing_user:
-        return existing_user
-    
-    # Новых пользователей может добавлять только админ через специальную команду
-    # Здесь просто возвращаем None - регистрация закрыта
-    return None
-
 # ========== СКЛАДЫ ==========
 def get_all_warehouses():
     """Получить все склады (для админа)"""
@@ -505,21 +494,21 @@ def all_balance_command(message):
     bot.reply_to(message, response)
 
 # ========== WEBHOOK И ЗАПУСК ==========
-@app.route('/health')
-def health_check():
-    """Для UptimeRobot - проверка работы"""
-    return 'OK!', 200
-
 @app.route('/')
 def index():
     """Корневая страница"""
     return '🤖 Wine Warehouse Bot is running!', 200
 
-@app.route('/webhook', methods=['POST', 'GET'])  # <-- ДОБАВЛЕНО GET
+@app.route('/health')
+def health_check():
+    """Для UptimeRobot"""
+    return 'OK!', 200
+
+@app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
     """Обработчик вебхука от Telegram"""
-    if request.method == 'GET':  # <-- ДОБАВЛЕНО
-        return 'Webhook is active!', 200  # <-- ДОБАВЛЕНО
+    if request.method == 'GET':
+        return 'Webhook is active!', 200
     
     try:
         json_str = request.get_data().decode('UTF-8')
@@ -529,8 +518,6 @@ def webhook():
     except Exception as e:
         print(f"❌ Webhook error: {e}", file=sys.stderr)
         return 'error', 500
-
-
 
 if __name__ == '__main__':
     # Тест подключения к БД
