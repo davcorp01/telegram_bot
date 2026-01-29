@@ -7,6 +7,7 @@ import pg8000
 from pg8000.native import Connection
 import json
 import time
+from telebot import types
 
 print("=" * 60, file=sys.stderr)
 print("🤖 WINE WAREHOUSE BOT WITH SUPABASE", file=sys.stderr)
@@ -263,7 +264,6 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
             pass
 
 # ========== КОМАНДЫ БОТА ==========
--@bot.message_handler(commands=['start'])
 @bot.message_handler(commands=['start'])
 def start(message):
     """Начало работы с кнопками"""
@@ -326,11 +326,13 @@ def handle_buttons(message):
     """Обработка нажатий на кнопки"""
     user = get_user_by_telegram_id(message.from_user.id)
     if not user:
+        bot.reply_to(message, "Сначала /start")
         return
     
     text = message.text
     
     if text == '📊 Мои остатки':
+        bot.send_message(message.chat.id, "Запрос остатков...")
         balance(message)
     elif text == '📤 Списать':
         spend_command(message)
@@ -348,9 +350,7 @@ def handle_buttons(message):
         users_command(message)
     elif text == '🔄 Пополнить остатки' and user['role'] == 'admin':
         add_stock_command(message)
-    else:
-        # Если сообщение не распознано как команда
-        bot.reply_to(message, "Используйте кнопки или команды из меню. /start - для помощи.")
+    # Ничего не делаем для других сообщений - их обработают другие хендлеры
 #========================================================
 
 @bot.message_handler(commands=['balance'])
