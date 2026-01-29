@@ -263,9 +263,10 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
             pass
 
 # ========== КОМАНДЫ БОТА ==========
+-@bot.message_handler(commands=['start'])
 @bot.message_handler(commands=['start'])
 def start(message):
-    """Начало работы"""
+    """Начало работы с кнопками"""
     user = get_user_by_telegram_id(message.from_user.id)
     
     if not user:
@@ -275,25 +276,82 @@ def start(message):
     role = "👑 Администратор" if user['role'] == 'admin' else "👤 Пользователь"
     warehouse = f"📦 Склад: {user['warehouse_name']}" if user['warehouse_name'] else "📦 Склад не назначен"
     
-    response = f"""✅ Добро пожаловать, {user['full_name']}!
+    # Создаем клавиатуру с командами
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    
+    # Общие команды для всех
+    markup.row('📊 Мои остатки', '📤 Списать')
+    
+    if user['role'] == 'admin':
+        # Команды только для админа
+        markup.row('➕ Товар', '🏢 Склад', '👤 Пользователь')
+        markup.row('📦 Все остатки', '📋 Список складов', '👥 Список пользователей')
+        markup.row('🔄 Пополнить остатки')
+    
+    response = f"""✅ *Добро пожаловать, {user['full_name']}!*
+
 {role}
 {warehouse}
 
-Доступные команды:
-/balance - Мои остатки
-/spend - Списать товар
-
-"""
-    if user['role'] == 'admin':
-        response += """
-Команды администратора:
-/add_product - Добавить товар
-/add_warehouse - Добавить склад
-/add_user - Добавить пользователя
-/all_balance - Все остатки
+*Используйте кнопки ниже или команды:*
 """
     
-    bot.reply_to(message, response)
+    if user['role'] == 'admin':
+        response += """
+*📋 Все команды:*
+
+📊 /balance - Мои остатки
+📤 /spend - Списать товар
+➕ /add_product - Добавить товар
+🏢 /add_warehouse - Добавить склад
+👤 /add_user - Добавить пользователя
+📦 /all_balance - Все остатки
+🔄 /add - Пополнить остатки
+📋 /warehouses - Список складов
+👥 /users - Список пользователей
+"""
+    else:
+        response += """
+📊 /balance - Мои остатки
+📤 /spend - Списать товар
+"""
+    
+    bot.send_message(message.chat.id, response, 
+                     parse_mode='Markdown', 
+                     reply_markup=markup)
+#=======================================
+# ========== ОБРАБОТКА КНОПОК ==========
+@bot.message_handler(func=lambda message: True)
+def handle_buttons(message):
+    """Обработка нажатий на кнопки"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user:
+        return
+    
+    text = message.text
+    
+    if text == '📊 Мои остатки':
+        balance(message)
+    elif text == '📤 Списать':
+        spend_command(message)
+    elif text == '📦 Все остатки' and user['role'] == 'admin':
+        all_balance_command(message)
+    elif text == '➕ Товар' and user['role'] == 'admin':
+        add_product_command(message)
+    elif text == '🏢 Склад' and user['role'] == 'admin':
+        add_warehouse_command(message)
+    elif text == '👤 Пользователь' and user['role'] == 'admin':
+        add_user_command(message)
+    elif text == '📋 Список складов' and user['role'] == 'admin':
+        warehouses_command(message)
+    elif text == '👥 Список пользователей' and user['role'] == 'admin':
+        users_command(message)
+    elif text == '🔄 Пополнить остатки' and user['role'] == 'admin':
+        add_stock_command(message)
+    else:
+        # Если сообщение не распознано как команда
+        bot.reply_to(message, "Используйте кнопки или команды из меню. /start - для помощи.")
+#========================================================
 
 @bot.message_handler(commands=['balance'])
 def balance(message):
