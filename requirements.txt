@@ -1,4 +1,6 @@
 Flask==2.3.3
 pyTelegramBotAPI==4.30.0
 pg8000==1.30.4
+openpyxl
+pandas
 
