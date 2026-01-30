@@ -8,6 +8,9 @@ from pg8000.native import Connection
 import json
 import time
 from telebot import types
+import pandas as pd
+from io import BytesIO
+from datetime import datetime, timedelta
 
 print("=" * 60, file=sys.stderr)
 print("🤖 WINE WAREHOUSE BOT WITH SUPABASE", file=sys.stderr)
@@ -268,6 +271,71 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
             conn.close()
         except:
             pass
+# ========== ЭКСПОРТ В EXCEL ==========
+def export_transactions_to_excel(telegram_id, days=30):
+    """Экспорт транзакций в Excel"""
+    conn = get_db_connection()
+    if not conn:
+        return None, "❌ Ошибка подключения к БД"
+    
+    try:
+        user = get_user_by_telegram_id(telegram_id)
+        if not user or user['role'] != 'admin':
+            return None, "❌ Только для администраторов"
+        
+        # Вычисляем дату начала
+        start_date = datetime.now() - timedelta(days=days)
+        
+        # Получаем транзакции
+        result = conn.run("""
+            SELECT 
+                t.date,
+                u.full_name as пользователь,
+                w.name as склад,
+                p.name as товар,
+                CASE 
+                    WHEN t.type = 'in' THEN 'Приход'
+                    ELSE 'Расход'
+                END as тип,
+                t.quantity as количество,
+                t.notes as примечания
+            FROM transactions t
+            JOIN users u ON t.user_id = u.id
+            JOIN warehouses w ON t.warehouse_id = w.id
+            JOIN products p ON t.product_id = p.id
+            WHERE t.date >= :start_date
+            ORDER BY t.date DESC, u.full_name
+        """, start_date=start_date.date())
+        
+        if not result:
+            return None, f"📊 Нет операций за последние {days} дней"
+        
+        # Создаем DataFrame
+        df = pd.DataFrame(result, columns=[
+            'Дата', 'Пользователь', 'Склад', 'Товар', 
+            'Тип операции', 'Количество', 'Примечания'
+        ])
+        
+        # Создаем Excel файл в памяти
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Операции', index=False)
+            
+            # Добавляем итоги
+            summary = df.groupby(['Тип операции', 'Товар'])['Количество'].sum().reset_index()
+            summary.to_excel(writer, sheet_name='Итоги', index=False)
+        
+        output.seek(0)
+        return output, f"✅ Экспортировано {len(df)} операций"
+        
+    except Exception as e:
+        print(f"❌ Error exporting transactions: {e}", file=sys.stderr)
+        return None, f"❌ Ошибка экспорта: {e}"
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 # ========== КОМАНДЫ БОТА ==========
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -292,6 +360,8 @@ def start(message):
         markup.row('➕ Товар', '🏢 Склад', '👤 Пользователь')
         markup.row('📦 Все остатки', '📋 Список складов', '👥 Список пользователей')
         markup.row('🔄 Пополнить остатки')
+        markup.row('📤 Экспорт дня', '📤 Экспорт недели')  # ДОБАВИТЬ
+        markup.row('📤 Экспорт месяца', '📊 Экспорт остатков')  # ДОБАВИТЬ
     
     # Формируем ответ БЕЗ лишних отступов внутри строки
     response = f"""✅ *Добро пожаловать, {user['full_name']}!*
@@ -302,8 +372,8 @@ def start(message):
 *Используйте кнопки ниже или команды:*
 """
     
-    if user['role'] == 'admin':
-        response += """
+if user['role'] == 'admin':
+    response += """
 *📋 Все команды:*
 
 📊 /balance - Мои остатки
@@ -315,6 +385,10 @@ def start(message):
 🔄 /add - Пополнить остатки
 📋 /warehouses - Список складов
 👥 /users - Список пользователей
+📤 /export_today - Операции за день
+📤 /export_week - Операции за неделю  
+📤 /export_month - Операции за месяц
+📊 /export_balances - Текущие остатки
 """
     else:
         # ВАЖНО: строки начинаются сразу с текста, без отступов!
@@ -855,6 +929,103 @@ def users_command(message):
             conn.close()
         except:
             pass
+# ========== КОМАНДЫ ЭКСПОРТА ==========
+
+@bot.message_handler(commands=['export_today', 'export_day'])
+def export_today_command(message):
+    """Экспорт сегодняшних операций"""
+    file_data, message_text = export_transactions_to_excel(message.from_user.id, days=1)
+    
+    if file_data:
+        bot.send_document(message.chat.id, file_data, 
+                         caption=message_text,
+                         visible_file_name=f"операции_за_{datetime.now().strftime('%d.%m.%Y')}.xlsx")
+    else:
+        bot.reply_to(message, message_text)
+
+@bot.message_handler(commands=['export_week'])
+def export_week_command(message):
+    """Экспорт операций за неделю"""
+    file_data, message_text = export_transactions_to_excel(message.from_user.id, days=7)
+    
+    if file_data:
+        bot.send_document(message.chat.id, file_data,
+                         caption=message_text,
+                         visible_file_name=f"операции_неделя_{datetime.now().strftime('%d.%m.%Y')}.xlsx")
+    else:
+        bot.reply_to(message, message_text)
+
+@bot.message_handler(commands=['export_month'])
+def export_month_command(message):
+    """Экспорт операций за месяц"""
+    file_data, message_text = export_transactions_to_excel(message.from_user.id, days=30)
+    
+    if file_data:
+        bot.send_document(message.chat.id, file_data,
+                         caption=message_text,
+                         visible_file_name=f"операции_месяц_{datetime.now().strftime('%d.%m.%Y')}.xlsx")
+    else:
+        bot.reply_to(message, message_text)
+
+@bot.message_handler(commands=['export_balances'])
+def export_balances_command(message):
+    """Экспорт текущих остатков"""
+    conn = get_db_connection()
+    if not conn:
+        bot.reply_to(message, "❌ Ошибка подключения к БД")
+        return
+    
+    try:
+        user = get_user_by_telegram_id(message.from_user.id)
+        if not user or user['role'] != 'admin':
+            bot.reply_to(message, "❌ Только для администраторов")
+            return
+        
+        # Получаем остатки
+        result = conn.run("""
+            SELECT 
+                u.full_name as пользователь,
+                w.name as склад,
+                p.name as товар,
+                b.quantity as остаток,
+                b.updated_at as обновлено
+            FROM balances b
+            JOIN users u ON b.user_id = u.id
+            JOIN warehouses w ON b.warehouse_id = w.id
+            JOIN products p ON b.product_id = p.id
+            WHERE b.quantity > 0
+            ORDER BY u.full_name, w.name, p.name
+        """)
+        
+        if not result:
+            bot.reply_to(message, "📊 Нет данных об остатках")
+            return
+        
+        # Создаем Excel
+        df = pd.DataFrame(result, columns=['Пользователь', 'Склад', 'Товар', 'Остаток', 'Обновлено'])
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Остатки', index=False)
+            
+            # Сводка по складам
+            summary = df.groupby(['Склад', 'Товар'])['Остаток'].sum().reset_index()
+            summary.to_excel(writer, sheet_name='Сводка', index=False)
+        
+        output.seek(0)
+        
+        bot.send_document(message.chat.id, output,
+                         caption=f"✅ Экспортировано {len(df)} записей об остатках",
+                         visible_file_name=f"остатки_{datetime.now().strftime('%d.%m.%Y')}.xlsx")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
 
 # ========== СИНОНИМЫ КОМАНД ==========
 
@@ -916,6 +1087,14 @@ def handle_buttons(message):
         users_command(message)
     elif text == '🔄 Пополнить остатки' and user['role'] == 'admin':
         add_stock_command(message)
+    elif text == '📤 Экспорт дня' and user['role'] == 'admin':
+        export_today_command(message)
+    elif text == '📤 Экспорт недели' and user['role'] == 'admin':
+        export_week_command(message)
+    elif text == '📤 Экспорт месяца' and user['role'] == 'admin':
+        export_month_command(message)
+    elif text == '📊 Экспорт остатков' and user['role'] == 'admin':
+        export_balances_command(message)
     else:
         # Обработка обычного текста
         if text.lower() in ['привет', 'hello', 'hi', 'здравствуй']:
