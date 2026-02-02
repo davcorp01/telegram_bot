@@ -446,24 +446,152 @@ def spend_command(message):
         bot.reply_to(message, "❌ Вы не зарегистрированы.")
         return
     
-    if not user['warehouse_id']:
-        bot.reply_to(message, "❌ Вам не назначен склад. Обратитесь к администратору.")
+    # Для админа - запрашиваем склад
+    if user['role'] == 'admin':
+        warehouses = get_all_warehouses()
+        if not warehouses:
+            bot.reply_to(message, "❌ В системе нет складов.")
+            return
+        
+        markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        for warehouse in warehouses:
+            markup.add(f"{warehouse['id']}. {warehouse['name']}")
+        markup.add("❌ Отмена")
+        
+        msg = bot.reply_to(message, "📦 *Выберите склад для списания:*", 
+                          parse_mode='Markdown', 
+                          reply_markup=markup)
+        bot.register_next_step_handler(msg, process_spend_warehouse_admin)
+    
+    else:
+        # Для обычных пользователей - сразу их склад
+        if not user['warehouse_id']:
+            bot.reply_to(message, "❌ Вам не назначен склад. Обратитесь к администратору.")
+            return
+        
+        # Показываем товары только с их склада
+        show_products_for_spend(message, user['warehouse_id'])
+
+def process_spend_warehouse_admin(message):
+    """Обработка выбора склада для админа"""
+    if message.text == "❌ Отмена":
+        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
         return
     
-    # Запрашиваем товар
-    products = get_all_products()
-    if not products:
-        bot.reply_to(message, "❌ В системе нет товаров.")
+    try:
+        warehouse_id = int(message.text.split('.')[0])
+        show_products_for_spend(message, warehouse_id)
+    except (ValueError, IndexError):
+        bot.reply_to(message, "❌ Неверный формат", reply_markup=telebot.types.ReplyKeyboardRemove())
+
+def show_products_for_spend(message, warehouse_id):
+    """Показать товары для списания с конкретного склада"""
+    # Получаем товары, которые ЕСТЬ на этом складе
+    conn = get_db_connection()
+    if not conn:
+        bot.reply_to(message, "❌ Ошибка подключения к БД")
         return
     
-    # Создаем клавиатуру с товарами
-    markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
-    for product in products:
-        markup.add(f"{product['id']}. {product['name']}")
-    markup.add("❌ Отмена")
+    try:
+        # Получаем товары с остатками > 0 на этом складе
+        result = conn.run("""
+            SELECT DISTINCT p.id, p.name, COALESCE(b.quantity, 0) as quantity
+            FROM products p
+            LEFT JOIN balances b ON p.id = b.product_id AND b.warehouse_id = :warehouse_id
+            WHERE COALESCE(b.quantity, 0) > 0
+            ORDER BY p.name
+        """, warehouse_id=warehouse_id)
+        
+        if not result:
+            # Получаем название склада для сообщения
+            warehouse_name = conn.run("SELECT name FROM warehouses WHERE id = :id", id=warehouse_id)
+            warehouse_name = warehouse_name[0][0] if warehouse_name else "этом складе"
+            
+            bot.reply_to(message, f"📦 На складе '{warehouse_name}' нет товаров для списания.")
+            return
+        
+        markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        
+        response = "📝 *Выберите товар для списания:*\n\n"
+        for product_id, product_name, quantity in result:
+            markup.add(f"{product_id}. {product_name} ({quantity} шт.)")
+            response += f"*{product_id}.* {product_name} - {quantity} шт.\n"
+        
+        markup.add("❌ Отмена")
+        
+        # Сохраняем warehouse_id для следующего шага
+        msg = bot.send_message(message.chat.id, response, 
+                              parse_mode='Markdown', 
+                              reply_markup=markup)
+        bot.register_next_step_handler(msg, process_spend_product_with_warehouse, warehouse_id)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
+def process_spend_product_with_warehouse(message, warehouse_id):
+    """Обработка выбора товара с учетом склада"""
+    if message.text == "❌ Отмена":
+        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
+        return
     
-    msg = bot.reply_to(message, "📝 Выберите товар для списания:", reply_markup=markup)
-    bot.register_next_step_handler(msg, process_spend_product)
+    try:
+        text = message.text.strip()
+        
+        # Парсим ID товара (формат: "1. Вино Красное (88 шт.)" или просто "1")
+        if '.' in text:
+            product_id = int(text.split('.')[0].strip())
+        else:
+            product_id = int(text)
+        
+        # Запрашиваем количество
+        msg = bot.reply_to(message, "📝 Введите количество для списания:", 
+                          reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(msg, process_spend_quantity_with_warehouse, warehouse_id, product_id)
+        
+    except (ValueError, IndexError):
+        bot.reply_to(message, "❌ Неверный формат. Введите номер товара.", 
+                    reply_markup=telebot.types.ReplyKeyboardRemove())
+
+def process_spend_quantity_with_warehouse(message, warehouse_id, product_id):
+    """Обработка количества для списания с учетом склада"""
+    try:
+        quantity = int(message.text)
+        if quantity <= 0:
+            bot.reply_to(message, "❌ Количество должно быть больше 0")
+            return
+        
+        # Получаем пользователя на этом складе
+        conn = get_db_connection()
+        if not conn:
+            bot.reply_to(message, "❌ Ошибка подключения к БД")
+            return
+        
+        user_result = conn.run("""
+            SELECT telegram_id FROM users 
+            WHERE warehouse_id = :warehouse_id
+            LIMIT 1
+        """, warehouse_id=warehouse_id)
+        
+        conn.close()
+        
+        if not user_result:
+            bot.reply_to(message, "❌ На этом складе нет пользователя")
+            return
+        
+        telegram_id = user_result[0][0]
+        
+        # Выполняем списание
+        success, result_message = add_transaction(telegram_id, product_id, quantity, 'out', warehouse_id)
+        bot.reply_to(message, result_message)
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Введите число")
+
 
 def process_spend_product(message):
     """Обработка выбора товара для списания"""
