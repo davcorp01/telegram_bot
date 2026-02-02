@@ -235,7 +235,7 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
             current_quantity = current_result[0][0] or 0
             
             if current_quantity < quantity:
-                return False, f"❌ Недостаточно товара. Доступно: {current_quantity} шт., а вы хотите списать: {quantity} шт."
+                return False, f"❌ Недостаточно товара. Доступно: {current_quantity} л., а вы хотите списать: {quantity} л."
         
         # Обновляем баланс
         conn.run("""
@@ -261,7 +261,7 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
         type=transaction_type,
         quantity=quantity)
         
-        return True, f"✅ Товар успешно {'пополнен' if transaction_type == 'in' else 'списан'} в количестве {quantity} шт."
+        return True, f"✅ Товар успешно {'пополнен' if transaction_type == 'in' else 'списан'} в количестве {quantity} л."
         
     except Exception as e:
         print(f"❌ Error adding transaction: {e}", file=sys.stderr)
@@ -427,12 +427,12 @@ def balance(message):
             if item['warehouse'] != current_warehouse:
                 response += f"\n🏢 {item['warehouse']}:\n"
                 current_warehouse = item['warehouse']
-            response += f"  • {item['product']}: {item['quantity']} шт.\n"
+            response += f"  • {item['product']}: {item['quantity']} л.\n"
             total += item['quantity']
     else:
         # Обычный пользователь
         for item in balances:
-            response += f"• {item['product']}: {item['quantity']} шт.\n"
+            response += f"• {item['product']}: {item['quantity']} л.\n"
             total += item['quantity']
     
     response += f"\n📊 Всего позиций: {len(balances)}"
@@ -514,8 +514,8 @@ def show_products_for_spend(message, warehouse_id):
         
         response = "📝 *Выберите товар для списания:*\n\n"
         for product_id, product_name, quantity in result:
-            markup.add(f"{product_id}. {product_name} ({quantity} шт.)")
-            response += f"*{product_id}.* {product_name} - {quantity} шт.\n"
+            markup.add(f"{product_id}. {product_name} ({quantity} л.)")
+            response += f"*{product_id}.* {product_name} - {quantity} л.\n"
         
         markup.add("❌ Отмена")
         
@@ -542,7 +542,7 @@ def process_spend_product_with_warehouse(message, warehouse_id):
     try:
         text = message.text.strip()
         
-        # Парсим ID товара (формат: "1. Вино Красное (88 шт.)" или просто "1")
+        # Парсим ID товара (формат: "1. Вино Красное (88 л.)" или просто "1")
         if '.' in text:
             product_id = int(text.split('.')[0].strip())
         else:
@@ -731,10 +731,10 @@ def all_balance_command(message):
         if item['warehouse'] != current_warehouse:
             response += f"\n🏢 {item['warehouse']}:\n"
             current_warehouse = item['warehouse']
-        response += f"  • {item['product']}: {item['quantity']} шт.\n"
+        response += f"  • {item['product']}: {item['quantity']} л.\n"
         total_all += item['quantity']
     
-    response += f"\n📊 Всего товаров в системе: {total_all} шт."
+    response += f"\n📊 Всего товаров в системе: {total_all} л."
     bot.reply_to(message, response)
 
 @bot.message_handler(commands=['add'])
