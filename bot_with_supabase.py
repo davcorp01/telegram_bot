@@ -263,9 +263,10 @@ def export_transactions_to_excel(telegram_id, days=30):
         if not user or user['role'] != 'admin':
             return None, "❌ Только для администраторов"
         
+        # Вычисляем дату начала
         start_date = datetime.now() - timedelta(days=days)
         
-        # Получаем транзакции (теперь без JOIN users, так как нет user_id в transactions)
+        # Получаем транзакции
         result = conn.run("""
             SELECT 
                 t.date,
@@ -286,7 +287,35 @@ def export_transactions_to_excel(telegram_id, days=30):
             ORDER BY t.date DESC, w.name
         """, start_date=start_date.date())
         
-        # ... остальной код без изменений ...
+        if not result:
+            return None, f"📊 Нет операций за последние {days} дней"
+        
+        # Создаем DataFrame
+        df = pd.DataFrame(result, columns=[
+            'Дата', 'Пользователь', 'Склад', 'Товар', 
+            'Тип операции', 'Количество', 'Примечания'
+        ])
+        
+        # Создаем Excel файл в памяти
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Операции', index=False)
+            
+            # Добавляем итоги
+            summary = df.groupby(['Тип операции', 'Товар'])['Количество'].sum().reset_index()
+            summary.to_excel(writer, sheet_name='Итоги', index=False)
+        
+        output.seek(0)
+        return output, f"✅ Экспортировано {len(df)} операций"
+        
+    except Exception as e:
+        print(f"❌ Error exporting transactions: {e}", file=sys.stderr)
+        return None, f"❌ Ошибка экспорта: {e}"
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 # ========== КОМАНДЫ БОТА ==========
 @bot.message_handler(commands=['start'])
