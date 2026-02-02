@@ -150,8 +150,9 @@ def get_all_products():
             pass
 
 # ========== ОСТАТКИ ==========
+
 def get_user_balance(telegram_id, warehouse_id=None):
-    """Получить остатки на складе пользователя - НОВАЯ ВЕРСИЯ из stock"""
+    """Получить остатки пользователя (только его склад)"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -161,12 +162,12 @@ def get_user_balance(telegram_id, warehouse_id=None):
         if not user:
             return []
         
-        # Определяем склад
+        # Определяем склад (если не указан явно - берем склад пользователя)
         target_warehouse = warehouse_id or user['warehouse_id']
         if not target_warehouse:
             return []
         
-        # Получаем остатки из таблицы stock
+        # Получаем остатки из таблицы stock (только для этого склада)
         result = conn.run("""
             SELECT p.name, COALESCE(s.quantity, 0) as quantity
             FROM products p
@@ -191,6 +192,7 @@ def get_user_balance(telegram_id, warehouse_id=None):
             conn.close()
         except:
             pass
+
 # ========== ОПЕРАЦИИ ==========
 def add_transaction(telegram_id, product_id, quantity, transaction_type, warehouse_id=None):
     """Добавить операцию (списание/пополнение) - НОВАЯ ВЕРСИЯ без user_id в stock"""
@@ -386,38 +388,31 @@ def start(message):
 
 @bot.message_handler(commands=['balance'])
 def balance(message):
-    """Показать остатки"""
+    """Показать остатки пользователя"""
     user = get_user_by_telegram_id(message.from_user.id)
     if not user:
         bot.reply_to(message, "❌ Вы не зарегистрированы.")
         return
     
+    # ДЛЯ ВСЕХ пользователей (включая админа) - только их склад
     balances = get_user_balance(message.from_user.id)
     
     if not balances:
-        bot.reply_to(message, "📦 На вашем складе нет товаров.")
+        warehouse_name = user['warehouse_name'] or 'не назначен'
+        bot.reply_to(message, f"📦 На складе '{warehouse_name}' нет товаров.")
         return
     
-    response = f"📦 ОСТАТКИ НА СКЛАДЕ '{user['warehouse_name'] or 'не назначен'}':\n\n"
+    warehouse_name = user['warehouse_name'] or 'не назначен'
+    response = f"📦 ОСТАТКИ НА СКЛАДЕ '{warehouse_name}':\n\n"
     total = 0
     
-    if user['role'] == 'admin' and len(balances) > 0 and 'warehouse' in balances[0]:
-        # Админ видит все склады
-        current_warehouse = None
-        for item in balances:
-            if item['warehouse'] != current_warehouse:
-                response += f"\n🏢 {item['warehouse']}:\n"
-                current_warehouse = item['warehouse']
-            response += f"  • {item['product']}: {item['quantity']} л.\n"
-            total += item['quantity']
-    else:
-        # Обычный пользователь
-        for item in balances:
-            response += f"• {item['product']}: {item['quantity']} л.\n"
-            total += item['quantity']
+    for item in balances:
+        response += f"• {item['product']}: {item['quantity']} л.\n"
+        total += item['quantity']
     
-    response += f"\n📊 Всего позиций: {len(balances)}"
+    response += f"\n📊 Всего: {total} л."
     bot.reply_to(message, response)
+
 
 @bot.message_handler(commands=['spend'])
 def spend_command(message):
@@ -696,26 +691,59 @@ def all_balance_command(message):
         bot.reply_to(message, "❌ Только для администраторов")
         return
     
-    # Используем функцию баланса без указания склада
-    balances = get_user_balance(message.from_user.id)
-    
-    if not balances:
-        bot.reply_to(message, "📦 В системе нет остатков.")
+    conn = get_db_connection()
+    if not conn:
+        bot.reply_to(message, "❌ Ошибка подключения к БД")
         return
     
-    response = "📦 ОСТАТКИ ПО ВСЕМ СКЛАДАМ:\n\n"
-    current_warehouse = None
-    total_all = 0
-    
-    for item in balances:
-        if item['warehouse'] != current_warehouse:
-            response += f"\n🏢 {item['warehouse']}:\n"
-            current_warehouse = item['warehouse']
-        response += f"  • {item['product']}: {item['quantity']} л.\n"
-        total_all += item['quantity']
-    
-    response += f"\n📊 Всего товаров в системе: {total_all} л."
-    bot.reply_to(message, response)
+    try:
+        # Получаем все остатки со всех складов
+        result = conn.run("""
+            SELECT 
+                w.name as склад,
+                p.name as товар,
+                COALESCE(s.quantity, 0) as остаток
+            FROM stock s
+            JOIN warehouses w ON s.warehouse_id = w.id
+            JOIN products p ON s.product_id = p.id
+            WHERE s.quantity > 0
+            ORDER BY w.name, p.name
+        """)
+        
+        if not result:
+            bot.reply_to(message, "📦 В системе нет остатков.")
+            return
+        
+        response = "📦 ОСТАТКИ ПО ВСЕМ СКЛАДАМ:\n\n"
+        current_warehouse = None
+        warehouse_count = {}
+        
+        for warehouse_name, product_name, quantity in result:
+            if warehouse_name != current_warehouse:
+                response += f"\n🏢 *{warehouse_name}:*\n"
+                current_warehouse = warehouse_name
+                warehouse_count[warehouse_name] = 0
+            
+            response += f"  • {product_name}: {quantity} л.\n"
+            warehouse_count[warehouse_name] += 1
+        
+        # Добавляем статистику
+        response += f"\n📊 *Статистика:*"
+        for warehouse_name, count in warehouse_count.items():
+            response += f"\n🏢 {warehouse_name}: {count} позиций"
+        
+        total_items = sum(warehouse_count.values())
+        response += f"\n\n📈 Всего позиций в системе: {total_items}"
+        
+        bot.reply_to(message, response, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 @bot.message_handler(commands=['add'])
 def add_stock_command(message):
