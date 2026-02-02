@@ -70,9 +70,12 @@ def get_db_connection():
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
 def get_user_by_telegram_id(telegram_id):
-    """Получить пользователя по telegram_id"""
+    """Получить пользователя по telegram_id - ДОБАВИМ ОТЛАДКУ"""
+    print(f"DEBUG: Searching user with telegram_id={telegram_id}", file=sys.stderr)
+    
     conn = get_db_connection()
     if not conn:
+        print(f"DEBUG: No DB connection", file=sys.stderr)
         return None
     
     try:
@@ -83,8 +86,10 @@ def get_user_by_telegram_id(telegram_id):
             WHERE u.telegram_id = :telegram_id
         """, telegram_id=telegram_id)
         
+        print(f"DEBUG: Query result: {result}", file=sys.stderr)
+        
         if result:
-            return {
+            user = {
                 'id': result[0][0],
                 'telegram_id': result[0][1],
                 'username': result[0][2],
@@ -93,16 +98,19 @@ def get_user_by_telegram_id(telegram_id):
                 'warehouse_id': result[0][6],
                 'warehouse_name': result[0][7]
             }
+            print(f"DEBUG: Found user: {user['full_name']}", file=sys.stderr)
+            return user
+        
+        print(f"DEBUG: User not found", file=sys.stderr)
         return None
     except Exception as e:
-        print(f"❌ Error getting user: {e}", file=sys.stderr)
+        print(f"DEBUG: Error: {e}", file=sys.stderr)
         return None
     finally:
         try:
             conn.close()
         except:
             pass
-
 # ========== СКЛАДЫ ==========
 def get_all_warehouses():
     """Получить все склады (для админа)"""
