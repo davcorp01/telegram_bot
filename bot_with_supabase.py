@@ -229,10 +229,9 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
         if user_result:
             user_id = user_result[0][0]
             conn.run("""
-                INSERT INTO transactions (user_id, product_id, warehouse_id, type, quantity)
-                VALUES (:user_id, :product_id, :warehouse_id, :type, :quantity)
-            """, user_id=user_id, product_id=product_id, 
-                 warehouse_id=target_warehouse, type=transaction_type, quantity=quantity)
+                INSERT INTO transactions (product_id, warehouse_id, type, quantity)
+                VALUES (:product_id, :warehouse_id, :type, :quantity)
+            """, product_id=product_id, warehouse_id=target_warehouse, type=transaction_type, quantity=quantity)
         
         return True, f"✅ Товар успешно {'пополнен' if transaction_type == 'in' else 'списан'} в количестве {quantity} л."
         
