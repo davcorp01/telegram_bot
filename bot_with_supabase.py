@@ -143,7 +143,7 @@ def get_all_products():
 
 # ========== ОСТАТКИ ==========
 def get_user_balance(telegram_id, warehouse_id=None):
-    """Получить остатки пользователя"""
+    """Получить остатки на складе пользователя - НОВАЯ ВЕРСИЯ из stock"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -153,47 +153,27 @@ def get_user_balance(telegram_id, warehouse_id=None):
         if not user:
             return []
         
-        # Для обычных пользователей - только их склад
-        # Для админов - все склады или конкретный, если указан
-        if user['role'] == 'admin' and not warehouse_id:
-            # Админ видит все
-            result = conn.run("""
-                SELECT w.name, p.name, SUM(b.quantity)
-                FROM balances b
-                JOIN warehouses w ON b.warehouse_id = w.id
-                JOIN products p ON b.product_id = p.id
-                GROUP BY w.name, p.name
-                ORDER BY w.name, p.name
-            """)
-            balances = []
-            for row in result:
-                balances.append({
-                    'warehouse': row[0],
-                    'product': row[1],
-                    'quantity': row[2] or 0
-                })
-            return balances
-        else:
-            # Для обычного пользователя или админа с указанным складом
-            target_warehouse = warehouse_id or user['warehouse_id']
-            if not target_warehouse:
-                return []
-            
-            result = conn.run("""
-                SELECT p.name, b.quantity
-                FROM balances b
-                JOIN products p ON b.product_id = p.id
-                WHERE b.user_id = :user_id AND b.warehouse_id = :warehouse_id
-                ORDER BY p.name
-            """, user_id=user['id'], warehouse_id=target_warehouse)
-            
-            balances = []
-            for row in result:
-                balances.append({
-                    'product': row[0],
-                    'quantity': row[1] or 0
-                })
-            return balances
+        # Определяем склад
+        target_warehouse = warehouse_id or user['warehouse_id']
+        if not target_warehouse:
+            return []
+        
+        # Получаем остатки из таблицы stock
+        result = conn.run("""
+            SELECT p.name, COALESCE(s.quantity, 0) as quantity
+            FROM products p
+            LEFT JOIN stock s ON p.id = s.product_id AND s.warehouse_id = :warehouse_id
+            WHERE COALESCE(s.quantity, 0) > 0
+            ORDER BY p.name
+        """, warehouse_id=target_warehouse)
+        
+        balances = []
+        for row in result:
+            balances.append({
+                'product': row[0],
+                'quantity': row[1]
+            })
+        return balances
             
     except Exception as e:
         print(f"❌ Error getting balance: {e}", file=sys.stderr)
@@ -203,10 +183,9 @@ def get_user_balance(telegram_id, warehouse_id=None):
             conn.close()
         except:
             pass
-
 # ========== ОПЕРАЦИИ ==========
 def add_transaction(telegram_id, product_id, quantity, transaction_type, warehouse_id=None):
-    """Добавить операцию (списание/пополнение)"""
+    """Добавить операцию (списание/пополнение) - НОВАЯ ВЕРСИЯ без user_id в stock"""
     conn = get_db_connection()
     if not conn:
         return False, "❌ Ошибка подключения к БД"
@@ -221,45 +200,39 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
         if not target_warehouse:
             return False, "❌ Склад не назначен"
         
-        # Проверяем достаточно ли товара для списания
+        # Проверяем достаточно ли товара для списания (из таблицы stock)
         if transaction_type == 'out':
-            current_result = conn.run("""
-                SELECT quantity FROM balances 
-                WHERE user_id = :user_id AND product_id = :product_id AND warehouse_id = :warehouse_id
-            """, user_id=user['id'], product_id=product_id, warehouse_id=target_warehouse)
+            current = conn.run("""
+                SELECT quantity FROM stock 
+                WHERE product_id = :product_id AND warehouse_id = :warehouse_id
+            """, product_id=product_id, warehouse_id=target_warehouse)
             
-            # Проверяем, есть ли запись вообще
-            if not current_result or not current_result[0]:
-                return False, "❌ У вас нет этого товара на складе"
-            
-            current_quantity = current_result[0][0] or 0
-            
-            if current_quantity < quantity:
-                return False, f"❌ Недостаточно товара. Доступно: {current_quantity} л., а вы хотите списать: {quantity} л."
+            if not current or current[0][0] is None or current[0][0] < quantity:
+                available = current[0][0] if current and current[0][0] is not None else 0
+                return False, f"❌ Недостаточно товара. Доступно: {available} л."
         
-        # Обновляем баланс
-        conn.run("""
-            INSERT INTO balances (user_id, product_id, warehouse_id, quantity)
-            VALUES (:user_id, :product_id, :warehouse_id, :quantity)
-            ON CONFLICT (user_id, product_id, warehouse_id) 
-            DO UPDATE SET quantity = balances.quantity + :change
-        """, 
-        user_id=user['id'], 
-        product_id=product_id,
-        warehouse_id=target_warehouse,
-        quantity=quantity if transaction_type == 'in' else -quantity,
-        change=quantity if transaction_type == 'in' else -quantity)
+        # Обновляем остатки на складе (stock)
+        change = quantity if transaction_type == 'in' else -quantity
         
-        # Добавляем запись в историю
         conn.run("""
-            INSERT INTO transactions (user_id, product_id, warehouse_id, type, quantity)
-            VALUES (:user_id, :product_id, :warehouse_id, :type, :quantity)
-        """,
-        user_id=user['id'],
-        product_id=product_id,
-        warehouse_id=target_warehouse,
-        type=transaction_type,
-        quantity=quantity)
+            INSERT INTO stock (warehouse_id, product_id, quantity)
+            VALUES (:warehouse_id, :product_id, :change)
+            ON CONFLICT (warehouse_id, product_id) 
+            DO UPDATE SET quantity = stock.quantity + EXCLUDED.quantity
+        """, warehouse_id=target_warehouse, product_id=product_id, change=change)
+        
+        # Добавляем запись в историю (transactions)
+        # Теперь нужно получить user_id для записи в историю
+        user_result = conn.run("SELECT id FROM users WHERE telegram_id = :telegram_id", 
+                              telegram_id=telegram_id)
+        
+        if user_result:
+            user_id = user_result[0][0]
+            conn.run("""
+                INSERT INTO transactions (user_id, product_id, warehouse_id, type, quantity)
+                VALUES (:user_id, :product_id, :warehouse_id, :type, :quantity)
+            """, user_id=user_id, product_id=product_id, 
+                 warehouse_id=target_warehouse, type=transaction_type, quantity=quantity)
         
         return True, f"✅ Товар успешно {'пополнен' if transaction_type == 'in' else 'списан'} в количестве {quantity} л."
         
@@ -484,21 +457,20 @@ def process_spend_warehouse_admin(message):
     except (ValueError, IndexError):
         bot.reply_to(message, "❌ Неверный формат", reply_markup=telebot.types.ReplyKeyboardRemove())
 
-def show_products_for_spend(message, warehouse_id):
+def show_products_for_spend(message, warehouse_id, user_id=None):
     """Показать товары для списания с конкретного склада"""
-    # Получаем товары, которые ЕСТЬ на этом складе
     conn = get_db_connection()
     if not conn:
         bot.reply_to(message, "❌ Ошибка подключения к БД")
         return
     
     try:
-        # Получаем товары с остатками > 0 на этом складе
+        # Получаем товары с остатками > 0 на этом складе (из stock)
         result = conn.run("""
-            SELECT DISTINCT p.id, p.name, COALESCE(b.quantity, 0) as quantity
+            SELECT p.id, p.name, COALESCE(s.quantity, 0) as quantity
             FROM products p
-            LEFT JOIN balances b ON p.id = b.product_id AND b.warehouse_id = :warehouse_id
-            WHERE COALESCE(b.quantity, 0) > 0
+            LEFT JOIN stock s ON p.id = s.product_id AND s.warehouse_id = :warehouse_id
+            WHERE COALESCE(s.quantity, 0) > 0
             ORDER BY p.name
         """, warehouse_id=warehouse_id)
         
