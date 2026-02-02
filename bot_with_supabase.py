@@ -627,7 +627,7 @@ def add_product_command(message):
     bot.register_next_step_handler(msg, process_add_product)
 
 def process_add_product(message):
-    """Обработка добавления товара"""
+    """Обработка добавления товара с проверкой дубликатов"""
     product_name = message.text.strip()
     if not product_name:
         bot.reply_to(message, "❌ Название не может быть пустым")
@@ -639,10 +639,44 @@ def process_add_product(message):
         return
     
     try:
+        # ПРОВЕРЯЕМ: есть ли уже товар с таким названием (без учета регистра)
+        existing = conn.run("""
+            SELECT id, name FROM products 
+            WHERE LOWER(name) = LOWER(:product_name)
+        """, product_name=product_name)
+        
+        if existing:
+            bot.reply_to(message, f"❌ Товар '{product_name}' уже существует (ID: {existing[0][0]})")
+            return
+        
+        # Добавляем новый товар
         conn.run("INSERT INTO products (name) VALUES (:name)", name=product_name)
-        bot.reply_to(message, f"✅ Товар '{product_name}' успешно добавлен")
+        
+        # Получаем ID нового товара
+        new_product = conn.run("SELECT id FROM products WHERE name = :name", name=product_name)
+        
+        if new_product:
+            product_id = new_product[0][0]
+            
+            # Создаем нулевые остатки на всех складах для нового товара
+            warehouses = conn.run("SELECT id FROM warehouses")
+            for warehouse in warehouses:
+                conn.run("""
+                    INSERT INTO stock (warehouse_id, product_id, quantity)
+                    VALUES (:warehouse_id, :product_id, 0)
+                    ON CONFLICT (warehouse_id, product_id) DO NOTHING
+                """, warehouse_id=warehouse[0], product_id=product_id)
+            
+            bot.reply_to(message, f"✅ Товар '{product_name}' успешно добавлен (ID: {product_id})")
+        else:
+            bot.reply_to(message, "❌ Не удалось добавить товар")
+        
     except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка: {e}")
+        error_msg = str(e)
+        if "duplicate" in error_msg.lower() or "unique" in error_msg.lower():
+            bot.reply_to(message, f"❌ Товар '{product_name}' уже существует в базе данных")
+        else:
+            bot.reply_to(message, f"❌ Ошибка: {error_msg[:100]}")
     finally:
         try:
             conn.close()
