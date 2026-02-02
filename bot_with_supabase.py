@@ -860,35 +860,23 @@ def process_add_user_telegram_id(message):
     try:
         telegram_id = int(message.text)
         
-        # Проверяем, не существует ли уже (через нашу функцию)
-        existing = get_user_by_telegram_id(telegram_id)
-        if existing:
-            bot.reply_to(message, f"❌ Пользователь с ID {telegram_id} уже существует ({existing['full_name']})")
-            return
-        
-        msg = bot.reply_to(message, "📝 Введите имя нового пользователя:")
-        bot.register_next_step_handler(msg, process_add_user_name, telegram_id)
-    except ValueError:
-        bot.reply_to(message, "❌ Введите числовой ID")
-
-
-
-
-def process_add_user_telegram_id(message):
-    """Обработка telegram_id нового пользователя"""
-    try:
-        telegram_id = int(message.text)
+        print(f"DEBUG: process_add_user_telegram_id: checking telegram_id={telegram_id}", file=sys.stderr)
         
         # Проверяем, не существует ли уже
         existing = get_user_by_telegram_id(telegram_id)
+        
         if existing:
-            bot.reply_to(message, f"❌ Пользователь с ID {telegram_id} уже существует")
+            print(f"DEBUG: User EXISTS: {existing['full_name']}", file=sys.stderr)
+            bot.reply_to(message, f"❌ Пользователь с ID {telegram_id} уже существует ({existing['full_name']})")
             return
+        
+        print(f"DEBUG: User NOT found, continuing...", file=sys.stderr)
         
         msg = bot.reply_to(message, "📝 Введите имя нового пользователя:")
         bot.register_next_step_handler(msg, process_add_user_name, telegram_id)
     except ValueError:
         bot.reply_to(message, "❌ Введите числовой ID")
+
 
 def process_add_user_name(message, telegram_id):
     """Обработка имени нового пользователя"""
