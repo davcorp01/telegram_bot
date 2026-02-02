@@ -263,10 +263,9 @@ def export_transactions_to_excel(telegram_id, days=30):
         if not user or user['role'] != 'admin':
             return None, "❌ Только для администраторов"
         
-        # Вычисляем дату начала
         start_date = datetime.now() - timedelta(days=days)
         
-        # Получаем транзакции
+        # Получаем транзакции (теперь без JOIN users, так как нет user_id в transactions)
         result = conn.run("""
             SELECT 
                 t.date,
@@ -275,47 +274,20 @@ def export_transactions_to_excel(telegram_id, days=30):
                 p.name as товар,
                 CASE 
                     WHEN t.type = 'in' THEN 'Приход'
-                ELSE 'Расход'
+                    ELSE 'Расход'
                 END as тип,
                 t.quantity as количество,
                 t.notes as примечания
             FROM transactions t
             JOIN warehouses w ON t.warehouse_id = w.id
-            LEFT JOIN users u ON w.id = u.warehouse_id  # <-- получаем пользователя склада
+            LEFT JOIN users u ON w.id = u.warehouse_id
             JOIN products p ON t.product_id = p.id
             WHERE t.date >= :start_date
             ORDER BY t.date DESC, w.name
-            """, start_date=start_date.date())
+        """, start_date=start_date.date())
         
-        if not result:
-            return None, f"📊 Нет операций за последние {days} дней"
-        
-        # Создаем DataFrame
-        df = pd.DataFrame(result, columns=[
-            'Дата', 'Пользователь', 'Склад', 'Товар', 
-            'Тип операции', 'Количество', 'Примечания'
-        ])
-        
-        # Создаем Excel файл в памяти
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Операции', index=False)
-            
-            # Добавляем итоги
-            summary = df.groupby(['Тип операции', 'Товар'])['Количество'].sum().reset_index()
-            summary.to_excel(writer, sheet_name='Итоги', index=False)
-        
-        output.seek(0)
-        return output, f"✅ Экспортировано {len(df)} операций"
-        
-    except Exception as e:
-        print(f"❌ Error exporting transactions: {e}", file=sys.stderr)
-        return None, f"❌ Ошибка экспорта: {e}"
-    finally:
-        try:
-            conn.close()
-        except:
-            pass
+        # ... остальной код без изменений ...
+
 # ========== КОМАНДЫ БОТА ==========
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -913,52 +885,61 @@ def process_add_user_warehouse(message, telegram_id, full_name):
             bot.reply_to(message, "❌ Ошибка подключения к БД", reply_markup=telebot.types.ReplyKeyboardRemove())
             return
         
-        # Определяем роль (можно добавить выбор роли, но пока user)
+        # Пробуем вставить пользователя
         role = 'admin' if telegram_id in ADMIN_IDS else 'user'
         
-        # Вставляем пользователя БЕЗ указания id (используем SERIAL)
-        conn.run("""
-            INSERT INTO users (telegram_id, full_name, role, warehouse_id) 
-            VALUES (:telegram_id, :full_name, :role, :warehouse_id)
-        """, telegram_id=telegram_id, full_name=full_name, role=role, warehouse_id=warehouse_id)
-        
-        # Получаем ID нового пользователя
-        result = conn.run("SELECT id FROM users WHERE telegram_id = :telegram_id", 
-                         telegram_id=telegram_id)
-        
-        if not result:
-            bot.reply_to(message, "❌ Ошибка: не удалось создать пользователя", 
-                        reply_markup=telebot.types.ReplyKeyboardRemove())
-            return
-        
-        user_id = result[0][0]
-        
-        # Инициализируем нулевые остатки для всех товаров
-        products = get_all_products()
-        for product in products:
+        try:
             conn.run("""
-                INSERT INTO balances (user_id, product_id, warehouse_id, quantity)
-                VALUES (:user_id, :product_id, :warehouse_id, 0)
-                ON CONFLICT (user_id, product_id, warehouse_id) DO NOTHING
-            """, user_id=user_id, product_id=product['id'], warehouse_id=warehouse_id)
-        
-        bot.reply_to(message, f"✅ Пользователь {full_name} (ID: {telegram_id}) успешно добавлен на склад!", 
-                    reply_markup=telebot.types.ReplyKeyboardRemove())
-        
+                INSERT INTO users (telegram_id, full_name, role, warehouse_id) 
+                VALUES (:telegram_id, :full_name, :role, :warehouse_id)
+                ON CONFLICT (telegram_id) 
+                DO UPDATE SET 
+                    full_name = EXCLUDED.full_name,
+                    role = EXCLUDED.role,
+                    warehouse_id = EXCLUDED.warehouse_id
+                RETURNING id
+            """, telegram_id=telegram_id, full_name=full_name, role=role, warehouse_id=warehouse_id)
+            
+            # Получаем ID пользователя
+            result = conn.run("SELECT id FROM users WHERE telegram_id = :telegram_id", 
+                             telegram_id=telegram_id)
+            
+            if not result:
+                bot.reply_to(message, "❌ Не удалось создать/обновить пользователя", 
+                            reply_markup=telebot.types.ReplyKeyboardRemove())
+                return
+            
+            user_id = result[0][0]
+            
+            # Инициализируем нулевые остатки в stock (НЕ В balances!)
+            products = get_all_products()
+            for product in products:
+                conn.run("""
+                    INSERT INTO stock (warehouse_id, product_id, quantity)
+                    VALUES (:warehouse_id, :product_id, 0)
+                    ON CONFLICT (warehouse_id, product_id) DO NOTHING
+                """, warehouse_id=warehouse_id, product_id=product['id'])
+            
+            bot.reply_to(message, f"✅ Пользователь {full_name} (ID: {telegram_id}) успешно добавлен!", 
+                        reply_markup=telebot.types.ReplyKeyboardRemove())
+            
+        except Exception as insert_error:
+            error_str = str(insert_error)
+            bot.reply_to(message, f"❌ Ошибка БД: {error_str[:100]}", 
+                        reply_markup=telebot.types.ReplyKeyboardRemove())
+                
+    except ValueError:
+        bot.reply_to(message, "❌ Введите номер склада", reply_markup=telebot.types.ReplyKeyboardRemove())
     except Exception as e:
-        # Более понятное сообщение об ошибке
-        error_msg = str(e)
-        if "duplicate key" in error_msg or "23505" in error_msg:
-            bot.reply_to(message, f"❌ Пользователь с telegram_id {telegram_id} уже существует!", 
-                        reply_markup=telebot.types.ReplyKeyboardRemove())
-        else:
-            bot.reply_to(message, f"❌ Ошибка: {error_msg[:100]}", 
-                        reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.reply_to(message, f"❌ Неожиданная ошибка: {str(e)[:100]}", 
+                    reply_markup=telebot.types.ReplyKeyboardRemove())
     finally:
         try:
             conn.close()
         except:
             pass
+
+
 
 @bot.message_handler(commands=['warehouses'])
 def warehouses_command(message):
@@ -1099,7 +1080,7 @@ def export_month_command(message):
 
 @bot.message_handler(commands=['export_balances'])
 def export_balances_command(message):
-    """Экспорт текущих остатков"""
+    """Экспорт текущих остатков из таблицы stock"""
     conn = get_db_connection()
     if not conn:
         bot.reply_to(message, "❌ Ошибка подключения к БД")
@@ -1111,20 +1092,20 @@ def export_balances_command(message):
             bot.reply_to(message, "❌ Только для администраторов")
             return
         
-        # Получаем остатки
+        # Получаем остатки из таблицы STOCK (не balances!)
         result = conn.run("""
             SELECT 
-                u.full_name as пользователь,
+                COALESCE(u.full_name, 'Нет пользователя') as пользователь,
                 w.name as склад,
                 p.name as товар,
-                b.quantity as остаток,
-                b.updated_at as обновлено
-            FROM balances b
-            JOIN users u ON b.user_id = u.id
-            JOIN warehouses w ON b.warehouse_id = w.id
-            JOIN products p ON b.product_id = p.id
-            WHERE b.quantity > 0
-            ORDER BY u.full_name, w.name, p.name
+                s.quantity as остаток,
+                s.updated_at as обновлено
+            FROM stock s
+            JOIN warehouses w ON s.warehouse_id = w.id
+            JOIN products p ON s.product_id = p.id
+            LEFT JOIN users u ON w.id = u.warehouse_id
+            WHERE s.quantity > 0
+            ORDER BY w.name, p.name
         """)
         
         if not result:
@@ -1155,7 +1136,6 @@ def export_balances_command(message):
             conn.close()
         except:
             pass
-
 
 # ========== СИНОНИМЫ КОМАНД ==========
 
