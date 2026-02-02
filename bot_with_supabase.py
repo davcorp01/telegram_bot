@@ -264,10 +264,7 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
         except:
             pass
 
-
 # ========== ЭКСПОРТ В EXCEL ==========
-
-
 def export_transactions_to_excel(telegram_id, days=30):
     """Экспорт транзакций в Excel"""
     conn = get_db_connection()
@@ -332,11 +329,8 @@ def export_transactions_to_excel(telegram_id, days=30):
             conn.close()
         except:
             pass
-            
 
 # ========== КОМАНДЫ БОТА ==========
-
-
 @bot.message_handler(commands=['start'])
 def start(message):
     """Начало работы с кнопками"""
