@@ -623,7 +623,7 @@ def all_balance_command(message):
 
 @bot.message_handler(commands=['add'])
 def add_stock_command(message):
-    """Пополнить остатки (админ)"""
+    """Пополнить склад (админ) - УПРОЩЕННАЯ ВЕРСИЯ"""
     user = get_user_by_telegram_id(message.from_user.id)
     if not user or user['role'] != 'admin':
         bot.reply_to(message, "❌ Только для администраторов")
@@ -636,15 +636,32 @@ def add_stock_command(message):
         return
     
     markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
-    for warehouse in warehouses:
-        markup.add(f"{warehouse['id']}. {warehouse['name']}")
+    
+    # Показываем склады с пользователями
+    conn = get_db_connection()
+    if conn:
+        for warehouse in warehouses:
+            # Получаем пользователя на этом складе
+            user_result = conn.run("""
+                SELECT u.full_name FROM users u 
+                WHERE u.warehouse_id = :warehouse_id
+                LIMIT 1
+            """, warehouse_id=warehouse['id'])
+            
+            user_name = user_result[0][0] if user_result else "нет пользователя"
+            markup.add(f"{warehouse['id']}. {warehouse['name']} ({user_name})")
+        
+        conn.close()
+    
     markup.add("❌ Отмена")
     
-    msg = bot.reply_to(message, "📦 Выберите склад для пополнения:", reply_markup=markup)
-    bot.register_next_step_handler(msg, process_add_warehouse_selection)
+    msg = bot.reply_to(message, "📦 *Выберите склад для пополнения:*", 
+                      parse_mode='Markdown', 
+                      reply_markup=markup)
+    bot.register_next_step_handler(msg, process_add_warehouse_simple)
 
-def process_add_warehouse_selection(message):
-    """Обработка выбора склада"""
+def process_add_warehouse_simple(message):
+    """Обработка выбора склада (упрощенная)"""
     if message.text == "❌ Отмена":
         bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
         return
@@ -652,28 +669,33 @@ def process_add_warehouse_selection(message):
     try:
         warehouse_id = int(message.text.split('.')[0])
         
-        # Запрашиваем пользователя (кому пополняем)
-        msg = bot.reply_to(message, "👤 Введите telegram_id пользователя:", 
-                          reply_markup=telebot.types.ReplyKeyboardRemove())
-        bot.register_next_step_handler(msg, process_add_user_selection, warehouse_id)
-    except:
-        bot.reply_to(message, "❌ Неверный формат", reply_markup=telebot.types.ReplyKeyboardRemove())
-
-def process_add_user_selection(message, warehouse_id):
-    """Обработка выбора пользователя"""
-    try:
-        target_telegram_id = int(message.text)
-        
-        # Проверяем существование пользователя
-        target_user = get_user_by_telegram_id(target_telegram_id)
-        if not target_user:
-            bot.reply_to(message, f"❌ Пользователь с ID {target_telegram_id} не найден")
+        # Получаем пользователя на этом складе
+        conn = get_db_connection()
+        if not conn:
+            bot.reply_to(message, "❌ Ошибка подключения к БД", 
+                        reply_markup=telebot.types.ReplyKeyboardRemove())
             return
+        
+        user_result = conn.run("""
+            SELECT u.telegram_id, u.full_name FROM users u 
+            WHERE u.warehouse_id = :warehouse_id
+            LIMIT 1
+        """, warehouse_id=warehouse_id)
+        
+        conn.close()
+        
+        if not user_result:
+            bot.reply_to(message, "❌ На этом складе нет пользователя", 
+                        reply_markup=telebot.types.ReplyKeyboardRemove())
+            return
+        
+        telegram_id, full_name = user_result[0]
         
         # Запрашиваем товар
         products = get_all_products()
         if not products:
-            bot.reply_to(message, "❌ В системе нет товаров")
+            bot.reply_to(message, "❌ В системе нет товаров", 
+                        reply_markup=telebot.types.ReplyKeyboardRemove())
             return
         
         markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
@@ -681,10 +703,50 @@ def process_add_user_selection(message, warehouse_id):
             markup.add(f"{product['id']}. {product['name']}")
         markup.add("❌ Отмена")
         
-        msg = bot.reply_to(message, "📝 Выберите товар для пополнения:", reply_markup=markup)
-        bot.register_next_step_handler(msg, process_add_product_selection, warehouse_id, target_telegram_id)
+        msg = bot.reply_to(message, f"📝 Выберите товар для пополнения склада *{full_name}*:", 
+                          parse_mode='Markdown', 
+                          reply_markup=markup)
+        bot.register_next_step_handler(msg, process_add_product_simple, warehouse_id, telegram_id)
+        
+    except (ValueError, IndexError):
+        bot.reply_to(message, "❌ Неверный формат. Выберите склад из списка.", 
+                    reply_markup=telebot.types.ReplyKeyboardRemove())
+
+def process_add_product_simple(message, warehouse_id, telegram_id):
+    """Обработка выбора товара (упрощенная)"""
+    if message.text == "❌ Отмена":
+        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
+        return
+    
+    try:
+        product_id = int(message.text.split('.')[0])
+        
+        # Запрашиваем количество
+        msg = bot.reply_to(message, "📝 Введите количество для пополнения:", 
+                          reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(msg, process_add_quantity_simple, warehouse_id, telegram_id, product_id)
+        
+    except (ValueError, IndexError):
+        bot.reply_to(message, "❌ Неверный формат. Выберите товар из списка.", 
+                    reply_markup=telebot.types.ReplyKeyboardRemove())
+
+def process_add_quantity_simple(message, warehouse_id, telegram_id, product_id):
+    """Обработка количества для пополнения (упрощенная)"""
+    try:
+        quantity = int(message.text)
+        if quantity <= 0:
+            bot.reply_to(message, "❌ Количество должно быть больше 0")
+            return
+        
+        # Выполняем пополнение
+        success, result_message = add_transaction(telegram_id, product_id, quantity, 'in', warehouse_id)
+        bot.reply_to(message, result_message)
+        
     except ValueError:
-        bot.reply_to(message, "❌ Введите числовой ID")
+        bot.reply_to(message, "❌ Введите число")
+
+
+
 
 def process_add_product_selection(message, warehouse_id, target_telegram_id):
     """Обработка выбора товара"""
