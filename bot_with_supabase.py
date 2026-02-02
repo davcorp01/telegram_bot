@@ -1,7 +1,6 @@
 import os
 import sys
 import telebot
-from datetime import datetime
 from flask import Flask, request
 import pg8000
 from pg8000.native import Connection
@@ -69,6 +68,7 @@ def get_db_connection():
         return None
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
+
 def get_user_by_telegram_id(telegram_id):
     """Получить пользователя по telegram_id - ДОБАВИМ ОТЛАДКУ"""
     print(f"DEBUG: Searching user with telegram_id={telegram_id}", file=sys.stderr)
@@ -111,7 +111,9 @@ def get_user_by_telegram_id(telegram_id):
             conn.close()
         except:
             pass
+            
 # ========== СКЛАДЫ ==========
+
 def get_all_warehouses():
     """Получить все склады (для админа)"""
     conn = get_db_connection()
@@ -130,7 +132,10 @@ def get_all_warehouses():
         except:
             pass
 
+
 # ========== ТОВАРЫ ==========
+
+
 def get_all_products():
     """Получить все товары"""
     conn = get_db_connection()
@@ -149,7 +154,9 @@ def get_all_products():
         except:
             pass
 
+
 # ========== ОСТАТКИ ==========
+
 
 def get_user_balance(telegram_id, warehouse_id=None):
     """Получить остатки пользователя (только его склад)"""
@@ -193,7 +200,10 @@ def get_user_balance(telegram_id, warehouse_id=None):
         except:
             pass
 
+
 # ========== ОПЕРАЦИИ ==========
+
+
 def add_transaction(telegram_id, product_id, quantity, transaction_type, warehouse_id=None):
     """Добавить операцию (списание/пополнение) - НОВАЯ ВЕРСИЯ без user_id в stock"""
     conn = get_db_connection()
@@ -253,7 +263,11 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
             conn.close()
         except:
             pass
+
+
 # ========== ЭКСПОРТ В EXCEL ==========
+
+
 def export_transactions_to_excel(telegram_id, days=30):
     """Экспорт транзакций в Excel"""
     conn = get_db_connection()
@@ -318,8 +332,11 @@ def export_transactions_to_excel(telegram_id, days=30):
             conn.close()
         except:
             pass
+            
 
 # ========== КОМАНДЫ БОТА ==========
+
+
 @bot.message_handler(commands=['start'])
 def start(message):
     """Начало работы с кнопками"""
@@ -616,6 +633,8 @@ def process_spend_quantity(message, product_id):
 
 
 # ========== АДМИН КОМАНДЫ ==========
+
+
 @bot.message_handler(commands=['add_product'])
 def add_product_command(message):
     """Добавить товар (админ)"""
