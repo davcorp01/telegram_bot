@@ -262,22 +262,22 @@ def export_transactions_to_excel(telegram_id, days=30):
         result = conn.run("""
             SELECT 
                 t.date,
-                u.full_name as пользователь,
+                COALESCE(u.full_name, 'Неизвестный') as пользователь,
                 w.name as склад,
                 p.name as товар,
                 CASE 
                     WHEN t.type = 'in' THEN 'Приход'
-                    ELSE 'Расход'
+                ELSE 'Расход'
                 END as тип,
                 t.quantity as количество,
                 t.notes as примечания
             FROM transactions t
-            JOIN users u ON t.user_id = u.id
             JOIN warehouses w ON t.warehouse_id = w.id
+            LEFT JOIN users u ON w.id = u.warehouse_id  # <-- получаем пользователя склада
             JOIN products p ON t.product_id = p.id
             WHERE t.date >= :start_date
-            ORDER BY t.date DESC, u.full_name
-        """, start_date=start_date.date())
+            ORDER BY t.date DESC, w.name
+            """, start_date=start_date.date())
         
         if not result:
             return None, f"📊 Нет операций за последние {days} дней"
