@@ -1,6 +1,7 @@
 import os
 import sys
 import telebot
+from datetime import datetime
 from flask import Flask, request
 import pg8000
 from pg8000.native import Connection
@@ -68,7 +69,6 @@ def get_db_connection():
         return None
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
-
 def get_user_by_telegram_id(telegram_id):
     """Получить пользователя по telegram_id - ДОБАВИМ ОТЛАДКУ"""
     print(f"DEBUG: Searching user with telegram_id={telegram_id}", file=sys.stderr)
@@ -111,9 +111,7 @@ def get_user_by_telegram_id(telegram_id):
             conn.close()
         except:
             pass
-            
 # ========== СКЛАДЫ ==========
-
 def get_all_warehouses():
     """Получить все склады (для админа)"""
     conn = get_db_connection()
@@ -132,10 +130,7 @@ def get_all_warehouses():
         except:
             pass
 
-
 # ========== ТОВАРЫ ==========
-
-
 def get_all_products():
     """Получить все товары"""
     conn = get_db_connection()
@@ -154,9 +149,7 @@ def get_all_products():
         except:
             pass
 
-
 # ========== ОСТАТКИ ==========
-
 
 def get_user_balance(telegram_id, warehouse_id=None):
     """Получить остатки пользователя (только его склад)"""
@@ -200,10 +193,7 @@ def get_user_balance(telegram_id, warehouse_id=None):
         except:
             pass
 
-
 # ========== ОПЕРАЦИИ ==========
-
-
 def add_transaction(telegram_id, product_id, quantity, transaction_type, warehouse_id=None):
     """Добавить операцию (списание/пополнение) - НОВАЯ ВЕРСИЯ без user_id в stock"""
     conn = get_db_connection()
@@ -263,7 +253,6 @@ def add_transaction(telegram_id, product_id, quantity, transaction_type, warehou
             conn.close()
         except:
             pass
-
 # ========== ЭКСПОРТ В EXCEL ==========
 def export_transactions_to_excel(telegram_id, days=30):
     """Экспорт транзакций в Excel"""
@@ -350,11 +339,12 @@ def start(message):
     markup.row('📊 Мои остатки', '📤 Списать')
     
     if user['role'] == 'admin':
-        markup.row('➕ Товар', '🗑️ Удалить товар', '📋 Товары')  # Добавили 2 новые кнопки
-        markup.row('🏢 Склад', '👤 Пользователь', '📦 Все остатки')
-        markup.row('📋 Список складов', '👥 Список пользователей', '🔄 Пополнить')
-        markup.row('📤 Экспорт дня', '📤 Экспорт недели', '📤 Экспорт месяца')
-        markup.row('📊 Экспорт остатков')
+        # Команды только для админа
+        markup.row('➕ Товар', '🏢 Склад', '👤 Пользователь')
+        markup.row('📦 Все остатки', '📋 Список складов', '👥 Список пользователей')
+        markup.row('🔄 Пополнить остатки')
+        markup.row('📤 Экспорт дня', '📤 Экспорт недели')
+        markup.row('📤 Экспорт месяца', '📊 Экспорт остатков')
     
     # Формируем ответ БЕЗ лишних отступов внутри строки
     response = f"""✅ *Добро пожаловать, {user['full_name']}!*
@@ -372,8 +362,6 @@ def start(message):
 📊 /balance - Мои остатки
 📤 /spend - Списать товар
 ➕ /add_product - Добавить товар
-🗑️ /delete_product - Удалить товар
-📋 /products - Список товаров
 🏢 /add_warehouse - Добавить склад
 👤 /add_user - Добавить пользователя
 📦 /all_balance - Все остатки
@@ -627,8 +615,6 @@ def process_spend_quantity(message, product_id):
 
 
 # ========== АДМИН КОМАНДЫ ==========
-
-
 @bot.message_handler(commands=['add_product'])
 def add_product_command(message):
     """Добавить товар (админ)"""
@@ -1242,121 +1228,6 @@ def export_balances_command(message):
         except:
             pass
 
-
-
-@bot.message_handler(commands=['products'])
-def products_command(message):
-    """Список всех товаров (админ)"""
-    user = get_user_by_telegram_id(message.from_user.id)
-    if not user or user['role'] != 'admin':
-        bot.reply_to(message, "❌ Только для администраторов")
-        return
-    
-    products = get_all_products()
-    if not products:
-        bot.reply_to(message, "📦 В системе нет товаров")
-        return
-    
-    response = "📋 СПИСОК ТОВАРОВ:\n\n"
-    for product in products:
-        response += f"• ID: {product['id']}, Название: {product['name']}\n"
-    
-    response += f"\n📊 Всего товаров: {len(products)}"
-    bot.reply_to(message, response)
-
-@bot.message_handler(commands=['delete_product'])
-def delete_product_command(message):
-    """Удалить товар (админ)"""
-    user = get_user_by_telegram_id(message.from_user.id)
-    if not user or user['role'] != 'admin':
-        bot.reply_to(message, "❌ Только для администраторов")
-        return
-    
-    products = get_all_products()
-    if not products:
-        bot.reply_to(message, "❌ В системе нет товаров")
-        return
-    
-    markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
-    for product in products:
-        markup.add(f"{product['id']}. {product['name']}")
-    markup.add("❌ Отмена")
-    
-    msg = bot.reply_to(message, "🗑️ Выберите товар для удаления:", reply_markup=markup)
-    bot.register_next_step_handler(msg, process_delete_product)
-
-
-
-def process_delete_product(message):
-    """Обработка удаления товара с проверкой транзакций"""
-    if message.text == "❌ Отмена":
-        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
-        return
-    
-    try:
-        product_id = int(message.text.split('.')[0])
-        
-        conn = get_db_connection()
-        if not conn:
-            bot.reply_to(message, "❌ Ошибка подключения к БД", reply_markup=telebot.types.ReplyKeyboardRemove())
-            return
-        
-        # 1. Получаем название товара
-        product_name_result = conn.run("SELECT name FROM products WHERE id = :id", id=product_id)
-        
-        if not product_name_result:
-            bot.reply_to(message, "❌ Товар не найден", reply_markup=telebot.types.ReplyKeyboardRemove())
-            return
-        
-        product_name = product_name_result[0][0]
-        
-        # 2. Проверяем, есть ли транзакции с этим товаром
-        transactions_count = conn.run("SELECT COUNT(*) FROM transactions WHERE product_id = :id", id=product_id)
-        
-        if transactions_count and transactions_count[0][0] > 0:
-            count = transactions_count[0][0]
-            bot.reply_to(message, 
-                f"❌ Нельзя удалить товар '{product_name}'\n"
-                f"📊 Есть {count} транзакций с этим товаром\n"
-                f"Используйте команду переименования или архивируйте товар",
-                reply_markup=telebot.types.ReplyKeyboardRemove())
-            return
-        
-        # 3. Проверяем, есть ли остатки на складах
-        stock_count = conn.run("SELECT COUNT(*) FROM stock WHERE product_id = :id AND quantity > 0", id=product_id)
-        
-        if stock_count and stock_count[0][0] > 0:
-            count = stock_count[0][0]
-            bot.reply_to(message, 
-                f"❌ Нельзя удалить товар '{product_name}'\n"
-                f"📦 Есть остатки на складах ({count} записей)\n"
-                f"Сначала спишите или обнулите остатки",
-                reply_markup=telebot.types.ReplyKeyboardRemove())
-            return
-        
-        # 4. Удаляем товар (теперь безопасно)
-        conn.run("DELETE FROM products WHERE id = :id", id=product_id)
-        
-        bot.reply_to(message, f"✅ Товар '{product_name}' успешно удален", 
-                    reply_markup=telebot.types.ReplyKeyboardRemove())
-        
-    except Exception as e:
-        error_msg = str(e)
-        if "foreign key constraint" in error_msg.lower():
-            bot.reply_to(message, 
-                f"❌ Нельзя удалить товар: есть связанные записи\n"
-                f"Обратитесь к администратору БД",
-                reply_markup=telebot.types.ReplyKeyboardRemove())
-        else:
-            bot.reply_to(message, f"❌ Ошибка: {error_msg[:100]}", 
-                        reply_markup=telebot.types.ReplyKeyboardRemove())
-    finally:
-        try:
-            conn.close()
-        except:
-            pass
-
-
 # ========== СИНОНИМЫ КОМАНД ==========
 
 @bot.message_handler(commands=['adduser'])
@@ -1407,10 +1278,6 @@ def handle_buttons(message):
         all_balance_command(message)
     elif text == '➕ Товар' and user['role'] == 'admin':
         add_product_command(message)
-    elif text == '📋 Товары' and user['role'] == 'admin':
-        products_command(message)
-    elif text == '🗑️ Удалить товар' and user['role'] == 'admin':
-        delete_product_command(message)
     elif text == '🏢 Склад' and user['role'] == 'admin':
         add_warehouse_command(message)
     elif text == '👤 Пользователь' and user['role'] == 'admin':
