@@ -340,11 +340,11 @@ def start(message):
     
     if user['role'] == 'admin':
         # Команды только для админа
-        markup.row('➕ Товар', '🏢 Склад', '👤 Пользователь')
-        markup.row('📦 Все остатки', '📋 Список складов', '👥 Список пользователей')
-        markup.row('🔄 Пополнить остатки')
-        markup.row('📤 Экспорт дня', '📤 Экспорт недели')
-        markup.row('📤 Экспорт месяца', '📊 Экспорт остатков')
+         markup.row('➕ Товар', '🗑️ Удалить товар', '📋 Товары')  # Добавили 2 новые кнопки
+        markup.row('🏢 Склад', '👤 Пользователь', '📦 Все остатки')
+        markup.row('📋 Список складов', '👥 Список пользователей', '🔄 Пополнить')
+        markup.row('📤 Экспорт дня', '📤 Экспорт недели', '📤 Экспорт месяца')
+        markup.row('📊 Экспорт остатков')
     
     # Формируем ответ БЕЗ лишних отступов внутри строки
     response = f"""✅ *Добро пожаловать, {user['full_name']}!*
@@ -1259,8 +1259,8 @@ def products_command(message):
 
 # ========== Убрать ошибочно созданный продукт ==========
 
-@bot.message_handler(commands=['product1'])
-def product1_command(message):
+@bot.message_handler(commands=['products1'])
+def products1_command(message):
     """Удалить товар (админ)"""
     user = get_user_by_telegram_id(message.from_user.id)
     if not user or user['role'] != 'admin':
@@ -1368,6 +1368,10 @@ def handle_buttons(message):
         all_balance_command(message)
     elif text == '➕ Товар' and user['role'] == 'admin':
         add_product_command(message)
+    elif text == '📋 Товары' and user['role'] == 'admin':
+        products_command(message)
+    elif text == '🗑️ Удалить товар' and user['role'] == 'admin':
+        products1_command(message)
     elif text == '🏢 Склад' and user['role'] == 'admin':
         add_warehouse_command(message)
     elif text == '👤 Пользователь' and user['role'] == 'admin':
