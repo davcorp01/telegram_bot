@@ -363,7 +363,7 @@ def start(message):
 📤 /spend - Списать товар
 ➕ /add_product - Добавить товар
 📋 /products - Список товаров
-🗑️ /delete_item - Удалить товар
+🗑️ /del_product - Удалить товар
 🏢 /add_warehouse - Добавить склад
 👤 /add_user - Добавить пользователя
 📦 /all_balance - Все остатки
