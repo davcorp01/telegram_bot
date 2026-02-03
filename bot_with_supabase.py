@@ -362,6 +362,7 @@ def start(message):
 📊 /balance - Мои остатки
 📤 /spend - Списать товар
 ➕ /add_product - Добавить товар
+📋 /products - Список товаров
 🏢 /add_warehouse - Добавить склад
 👤 /add_user - Добавить пользователя
 📦 /all_balance - Все остатки
@@ -375,7 +376,7 @@ def start(message):
 """
     else:
         # ВАЖНО: строки начинаются сразу с текста, без отступов!
-        #📋 /products - Список товаров
+
         #🗑️ /delete_product - Удалить товар
         response += """
 📊 /balance - Мои остатки
