@@ -1294,7 +1294,7 @@ def process_delete_product(message):
             bot.reply_to(message, "❌ Ошибка подключения к БД", reply_markup=telebot.types.ReplyKeyboardRemove())
             return
         
-        # Получаем название товара перед удалением
+        # Получаем название товара
         product_name_result = conn.run("SELECT name FROM products WHERE id = :id", id=product_id)
         
         if not product_name_result:
@@ -1303,7 +1303,32 @@ def process_delete_product(message):
         
         product_name = product_name_result[0][0]
         
-        # Удаляем товар (cascade удалит связанные записи в stock и transactions)
+        # Проверяем, есть ли связанные транзакции
+        transactions_result = conn.run(
+            "SELECT COUNT(*) FROM transactions WHERE product_id = :id", 
+            id=product_id
+        )
+        transaction_count = transactions_result[0][0] if transactions_result else 0
+        
+        # Проверяем, есть ли остатки на складах
+        stock_result = conn.run(
+            "SELECT COUNT(*) FROM stock WHERE product_id = :id", 
+            id=product_id
+        )
+        stock_count = stock_result[0][0] if stock_result else 0
+        
+        if transaction_count > 0 or stock_count > 0:
+            error_msg = f"❌ Невозможно удалить товар '{product_name}'\n\n"
+            if transaction_count > 0:
+                error_msg += f"📊 С товаром связано {transaction_count} транзакций\n"
+            if stock_count > 0:
+                error_msg += f"🏢 Товар есть на {stock_count} складах\n"
+            error_msg += "\nСначала удалите все транзакции и остатки по этому товару."
+            
+            bot.reply_to(message, error_msg, reply_markup=telebot.types.ReplyKeyboardRemove())
+            return
+        
+        # Если нет связанных записей - удаляем товар
         conn.run("DELETE FROM products WHERE id = :id", id=product_id)
         
         bot.reply_to(message, f"✅ Товар '{product_name}' успешно удален", 
@@ -1316,7 +1341,6 @@ def process_delete_product(message):
             conn.close()
         except:
             pass
-
 
 # ========== СИНОНИМЫ КОМАНД ==========
 
