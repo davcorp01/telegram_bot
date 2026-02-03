@@ -1310,25 +1310,28 @@ def process_delete_product(message):
         )
         transaction_count = transactions_result[0][0] if transactions_result else 0
         
-        # Проверяем, есть ли остатки на складах
+        # Проверяем, есть ли НЕНУЛЕВЫЕ остатки на складах
         stock_result = conn.run(
-            "SELECT COUNT(*) FROM stock WHERE product_id = :id", 
+            "SELECT COUNT(*) FROM stock WHERE product_id = :id AND quantity > 0", 
             id=product_id
         )
-        stock_count = stock_result[0][0] if stock_result else 0
+        stock_with_balance_count = stock_result[0][0] if stock_result else 0
         
-        if transaction_count > 0 or stock_count > 0:
+        if transaction_count > 0 or stock_with_balance_count > 0:
             error_msg = f"❌ Невозможно удалить товар '{product_name}'\n\n"
             if transaction_count > 0:
                 error_msg += f"📊 С товаром связано {transaction_count} транзакций\n"
-            if stock_count > 0:
-                error_msg += f"🏢 Товар есть на {stock_count} складах\n"
-            error_msg += "\nСначала удалите все транзакции и остатки по этому товару."
+            if stock_with_balance_count > 0:
+                error_msg += f"🏢 У товара есть остатки на {stock_with_balance_count} складах\n"
+            error_msg += "\nСначала удалите все транзакции и обнулите остатки по этому товару."
             
             bot.reply_to(message, error_msg, reply_markup=telebot.types.ReplyKeyboardRemove())
             return
         
-        # Если нет связанных записей - удаляем товар
+        # Если нет транзакций и ненулевых остатков - удаляем товар
+        # Сначала удаляем нулевые записи из stock
+        conn.run("DELETE FROM stock WHERE product_id = :id", id=product_id)
+        # Затем удаляем сам товар
         conn.run("DELETE FROM products WHERE id = :id", id=product_id)
         
         bot.reply_to(message, f"✅ Товар '{product_name}' успешно удален", 
@@ -1341,6 +1344,7 @@ def process_delete_product(message):
             conn.close()
         except:
             pass
+
 
 # ========== СИНОНИМЫ КОМАНД ==========
 
