@@ -1227,6 +1227,29 @@ def export_balances_command(message):
             conn.close()
         except:
             pass
+            
+# ========== Показать все продукты ==========
+
+@bot.message_handler(commands=['products'])
+def products_command(message):
+    """Список всех товаров (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    products = get_all_products()
+    if not products:
+        bot.reply_to(message, "📦 В системе нет товаров")
+        return
+    
+    response = "📋 СПИСОК ТОВАРОВ:\n\n"
+    for product in products:
+        response += f"• ID: {product['id']}, Название: {product['name']}\n"
+    
+    response += f"\n📊 Всего товаров: {len(products)}"
+    bot.reply_to(message, response)
+
 
 # ========== СИНОНИМЫ КОМАНД ==========
 
