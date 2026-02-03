@@ -340,7 +340,7 @@ def start(message):
     
     if user['role'] == 'admin':
         # Команды только для админа
-        markup.row('➕ Товар', '📋 Товары', '🗑️ Удалить товар')
+        #markup.row('➕ Товар', '📋 Товары', '🗑️ Удалить товар')
         markup.row('🏢 Склад', '👤 Пользователь', '📦 Все остатки')
         markup.row('📋 Список складов', '👥 Список пользователей', '🔄 Пополнить')
         markup.row('📤 Экспорт дня', '📤 Экспорт недели', '📤 Экспорт месяца')
@@ -1305,8 +1305,8 @@ def handle_buttons(message):
         add_product_command(message)
     elif text == '📋 Товары' and user['role'] == 'admin':
         products_command(message)
-    elif text == '🗑️ Удалить товар' and user['role'] == 'admin':
-        delete_product_command(message)
+    #elif text == '🗑️ Удалить товар' and user['role'] == 'admin':
+    #    delete_product_command(message)
     elif text == '🏢 Склад' and user['role'] == 'admin':
         add_warehouse_command(message)
     elif text == '👤 Пользователь' and user['role'] == 'admin':
