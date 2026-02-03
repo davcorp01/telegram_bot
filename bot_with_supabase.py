@@ -362,6 +362,7 @@ def start(message):
 📊 /balance - Мои остатки
 📤 /spend - Списать товар
 ➕ /add_product - Добавить товар
+📋 /products - Список товаров
 📋 /products1 - Список товаров
 🏢 /add_warehouse - Добавить склад
 👤 /add_user - Добавить пользователя
