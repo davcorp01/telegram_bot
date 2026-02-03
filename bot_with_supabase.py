@@ -1257,6 +1257,66 @@ def products_command(message):
     response += f"\n📊 Всего товаров: {len(products)}"
     bot.reply_to(message, response)
 
+# ========== Убрать ошибочно созданный продукт ==========
+
+@bot.message_handler(commands=['product1'])
+def product1_command(message):
+    """Удалить товар (админ)"""
+    user = get_user_by_telegram_id(message.from_user.id)
+    if not user or user['role'] != 'admin':
+        bot.reply_to(message, "❌ Только для администраторов")
+        return
+    
+    products = get_all_products()
+    if not products:
+        bot.reply_to(message, "❌ В системе нет товаров")
+        return
+    
+    markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+    for product in products:
+        markup.add(f"{product['id']}. {product['name']}")
+    markup.add("❌ Отмена")
+    
+    msg = bot.reply_to(message, "🗑️ Выберите товар для удаления:", reply_markup=markup)
+    bot.register_next_step_handler(msg, process_delete_product)
+
+def process_delete_product(message):
+    """Обработка удаления товара"""
+    if message.text == "❌ Отмена":
+        bot.reply_to(message, "❌ Отменено", reply_markup=telebot.types.ReplyKeyboardRemove())
+        return
+    
+    try:
+        product_id = int(message.text.split('.')[0])
+        
+        conn = get_db_connection()
+        if not conn:
+            bot.reply_to(message, "❌ Ошибка подключения к БД", reply_markup=telebot.types.ReplyKeyboardRemove())
+            return
+        
+        # Получаем название товара перед удалением
+        product_name_result = conn.run("SELECT name FROM products WHERE id = :id", id=product_id)
+        
+        if not product_name_result:
+            bot.reply_to(message, "❌ Товар не найден", reply_markup=telebot.types.ReplyKeyboardRemove())
+            return
+        
+        product_name = product_name_result[0][0]
+        
+        # Удаляем товар (cascade удалит связанные записи в stock и transactions)
+        conn.run("DELETE FROM products WHERE id = :id", id=product_id)
+        
+        bot.reply_to(message, f"✅ Товар '{product_name}' успешно удален", 
+                    reply_markup=telebot.types.ReplyKeyboardRemove())
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}", reply_markup=telebot.types.ReplyKeyboardRemove())
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
 
 # ========== СИНОНИМЫ КОМАНД ==========
 
