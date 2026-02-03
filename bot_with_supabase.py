@@ -1302,6 +1302,10 @@ def handle_buttons(message):
         all_balance_command(message)
     elif text == '➕ Товар' and user['role'] == 'admin':
         add_product_command(message)
+    elif text == '📋 Товары' and user['role'] == 'admin':
+        products_command(message)
+    elif text == '🗑️ Удалить товар' and user['role'] == 'admin':
+        delete_product_command(message)
     elif text == '🏢 Склад' and user['role'] == 'admin':
         add_warehouse_command(message)
     elif text == '👤 Пользователь' and user['role'] == 'admin':
